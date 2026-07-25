@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  db:
+    image: ghcr.io/infrastructure-as-code/postgres:15-alpine
+    container_name: clone-myport-db
+    environment:
+      - POSTGRES_PASSWORD=postgres-root-password
+      - POSTGRES_DB=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/db/01-init-roles.sql:/docker-entrypoint-initdb.d/01-init-roles.sql:ro
+      - ./docker/db/02-schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postgrest:
+    image: ghcr.io/supabase/postgrest:v12.2.0
+    container_name: clone-myport-postgrest
+    environment:
+      - PGRST_DB_URI=postgres://authenticator:my-secret-authenticator-password@db:5432/postgres
+      - PGRST_DB_SCHEMAS=public
+      - PGRST_DB_ANON_ROLE=anon
+      - PGRST_JWT_SECRET=super-secret-jwt-key-with-at-least-32-characters
+      - PGRST_DB_MAX_ROWS=50000
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Nginx gateway that rewrites /rest/v1/* -> /* for PostgREST
+  # This makes PostgREST compatible with the Supabase JS client
+  api:
+    image: ghcr.io/nginx/nginx-unprivileged:alpine
+    container_name: clone-myport-api
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "3011:8080"
+    depends_on:
+      - postgrest
+    restart: unless-stopped
+
+  db-ui:
+    image: ghcr.io/djnotes/adminer:latest
+    container_name: clone-myport-db-ui
+    ports:
+      - "8088:8080"
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clone-myport-web
+    ports:
+      - "3010:3000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "localhost:host-gateway"
+    depends_on:
+      - api
+      - db
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
