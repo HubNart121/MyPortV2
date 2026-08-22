@@ -2,16 +2,22 @@
 CREATE TABLE IF NOT EXISTS stocks (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  symbol TEXT NOT NULL UNIQUE,
+  symbol TEXT NOT NULL,
   name TEXT,
   sector TEXT,
   status TEXT NOT NULL,
   asset_type TEXT NOT NULL,
   port_type TEXT NOT NULL DEFAULT 'Private',
   dividend_per_share NUMERIC DEFAULT 0,
+  current_price NUMERIC DEFAULT 0,
   target_price NUMERIC DEFAULT 0,
+  graph_url TEXT,
+  link_url TEXT,
   note TEXT
 );
+
+ALTER TABLE stocks ADD COLUMN IF NOT EXISTS graph_url TEXT;
+ALTER TABLE stocks ADD COLUMN IF NOT EXISTS link_url TEXT;
 
 -- 2. Create buy_rounds table
 CREATE TABLE IF NOT EXISTS buy_rounds (
@@ -20,8 +26,15 @@ CREATE TABLE IF NOT EXISTS buy_rounds (
   stock_id UUID NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
   buy_date DATE NOT NULL,
   price NUMERIC NOT NULL,
-  shares NUMERIC NOT NULL
+  shares NUMERIC NOT NULL,
+  buy_fee NUMERIC NOT NULL DEFAULT 0 CHECK (buy_fee >= 0),
+  note TEXT,
+  link_url TEXT
 );
+
+ALTER TABLE buy_rounds ADD COLUMN IF NOT EXISTS note TEXT;
+ALTER TABLE buy_rounds ADD COLUMN IF NOT EXISTS link_url TEXT;
+ALTER TABLE buy_rounds ADD COLUMN IF NOT EXISTS buy_fee NUMERIC NOT NULL DEFAULT 0;
 
 -- 3. Enable Row Level Security (RLS)
 ALTER TABLE stocks ENABLE ROW LEVEL SECURITY;
@@ -50,8 +63,11 @@ CREATE TABLE IF NOT EXISTS realized_trades (
   sell_price NUMERIC NOT NULL,
   avg_cost_at_sell NUMERIC NOT NULL,
   profit NUMERIC NOT NULL,
+  sell_fee NUMERIC NOT NULL DEFAULT 0 CHECK (sell_fee >= 0),
   port_type TEXT NOT NULL
 );
+
+ALTER TABLE realized_trades ADD COLUMN IF NOT EXISTS sell_fee NUMERIC NOT NULL DEFAULT 0;
 
 ALTER TABLE realized_trades ENABLE ROW LEVEL SECURITY;
 
@@ -61,6 +77,15 @@ CREATE POLICY "Enable all access for realized_trades" ON realized_trades
   WITH CHECK (true);
 
 CREATE INDEX IF NOT EXISTS idx_realized_trades_stock_id ON realized_trades(stock_id);
+
+-- 6.1 Keep status synchronized with actual remaining shares.
+\ir 03-auto-stock-status.sql
+
+-- 6.2 Allow the same symbol in different ports.
+\ir 05-multi-port-symbol.sql
+
+-- 6.3 Add transaction fees and recalculate trade history.
+\ir 06-trading-fees.sql
 
 -- 7. Create files table
 CREATE TABLE IF NOT EXISTS files (
@@ -155,3 +180,6 @@ CREATE POLICY "Enable all access for dividend_payments" ON dividend_payments
   WITH CHECK (true);
 
 CREATE INDEX IF NOT EXISTS idx_dividend_payments_stock_id ON dividend_payments(stock_id);
+
+-- 12. Align Local/Docker with complete Backup JSON v4.
+\ir 07-backup-schema-parity.sql

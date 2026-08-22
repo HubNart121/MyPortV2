@@ -15,6 +15,9 @@ const schema = z.object({
   buy_date: z.string().min(1, 'Required'),
   price: z.coerce.number().min(0.0001, 'Must be > 0'),
   shares: z.coerce.number().min(1, 'Must be > 0'),
+  buy_fee: z.coerce.number().min(0, 'ค่าธรรมเนียมต้องไม่ติดลบ'),
+  note: z.string().trim().max(2000, 'Note must be 2,000 characters or less').optional(),
+  link_url: z.string().trim().max(2000, 'URL must be 2,000 characters or less').optional(),
 });
 
 export type BuyRoundFormData = z.output<typeof schema>;
@@ -34,6 +37,9 @@ export function BuyRoundForm({ initialData, onSubmit, onCancel, loading }: BuyRo
       buy_date: initialData?.buy_date || new Date().toISOString().slice(0, 10),
       price: initialData?.price || 0,
       shares: initialData?.shares || 0,
+      buy_fee: initialData?.buy_fee || 0,
+      note: initialData?.note || '',
+      link_url: initialData?.link_url || '',
     },
   });
 
@@ -70,6 +76,44 @@ export function BuyRoundForm({ initialData, onSubmit, onCancel, loading }: BuyRo
             <input type="number" step="1" className="form-input mono" placeholder="0" {...register('shares')} />
             {errors.shares && <span className="form-error">{errors.shares.message}</span>}
           </div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">ค่าธรรมเนียมซื้อรวม (฿)</label>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            className="form-input mono"
+            placeholder="0.00"
+            {...register('buy_fee')}
+          />
+          <div style={{ marginTop: '5px', color: 'var(--text-muted)', fontSize: '11px' }}>
+            กรอกยอดค่าคอมมิชชันและภาษีรวมของรายการนี้ ระบบจะบวกเข้าต้นทุน
+          </div>
+          {errors.buy_fee && <span className="form-error">{errors.buy_fee.message}</span>}
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Note</label>
+          <textarea
+            className="form-input"
+            rows={3}
+            placeholder="เช่น เหตุผลที่ซื้อ แผนการลงทุน หรือข้อมูลสำคัญ"
+            {...register('note')}
+          />
+          {errors.note && <span className="form-error">{errors.note.message}</span>}
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Link URL</label>
+          <input
+            type="url"
+            className="form-input mono"
+            placeholder="https://..."
+            {...register('link_url')}
+          />
+          {errors.link_url && <span className="form-error">{errors.link_url.message}</span>}
         </div>
 
         <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>

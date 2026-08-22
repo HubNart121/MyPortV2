@@ -17,7 +17,10 @@ const schema = z.object({
   asset_type: z.string().min(1, 'Required'),
   port_type: z.string().min(1, 'Required'),
   dividend_per_share: z.coerce.number().min(0),
+  current_price: z.coerce.number().min(0),
   target_price: z.coerce.number().min(0),
+  graph_url: z.string().trim().max(2048).optional().nullable(),
+  link_url: z.string().trim().max(2048).optional().nullable(),
   note: z.string().optional().nullable(),
 });
 
@@ -33,6 +36,7 @@ interface StockFormProps {
   existingPortTypes?: string[];
   existingStatuses?: string[];
   existingAssetTypes?: string[];
+  lockPortType?: boolean;
 }
 
 export function StockForm({
@@ -44,6 +48,7 @@ export function StockForm({
   existingPortTypes,
   existingStatuses,
   existingAssetTypes,
+  lockPortType = false,
 }: StockFormProps) {
   // Port Types
   const defaultPorts = ['Private', 'Business'];
@@ -103,7 +108,10 @@ export function StockForm({
       asset_type: initialAsset,
       port_type: initialPort,
       dividend_per_share: initialData?.dividend_per_share || 0,
+      current_price: initialData?.current_price || 0,
       target_price: initialData?.target_price || 0,
+      graph_url: initialData?.graph_url || '',
+      link_url: initialData?.link_url || '',
       note: initialData?.note || '',
     },
   });
@@ -144,7 +152,13 @@ export function StockForm({
           </div>
           <div className="form-group">
             <label className="form-label">Type Port *</label>
-            {!isCustomPort ? (
+            {lockPortType ? (
+              <input
+                className="form-input mono"
+                value={currentPortType || initialPort}
+                disabled
+              />
+            ) : !isCustomPort ? (
               <select
                 className="form-select"
                 value={currentPortType || ''}
@@ -193,6 +207,13 @@ export function StockForm({
               </div>
             )}
             {errors.port_type && <span className="form-error">{errors.port_type.message}</span>}
+            <div style={{ marginTop: '6px', color: lockPortType ? 'var(--amber)' : 'var(--text-muted)', fontSize: '10px', lineHeight: 1.5 }}>
+              {lockPortType
+                ? 'Port ถูกล็อกเพื่อป้องกันประวัติซื้อ–ขายและปันผลปะปนกัน'
+                : initialData?.id
+                  ? 'เปลี่ยน Port ได้เฉพาะหุ้นที่ยังไม่มีประวัติรายการ'
+                  : 'Symbol เดียวกันสามารถเพิ่มแยกใน Port อื่นได้'}
+            </div>
           </div>
         </div>
 
@@ -306,14 +327,37 @@ export function StockForm({
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '16px' }}>
           <div className="form-group">
-            <label className="form-label">ปันผลต่อหุ้น (฿)</label>
-            <input type="number" step="0.0001" className="form-input mono" placeholder="0.00" {...register('dividend_per_share')} />
+            <label className="form-label">ราคาหุ้นปัจจุบัน (฿)</label>
+            <input type="number" min="0" step="0.0001" className="form-input mono" placeholder="0.00" {...register('current_price')} />
           </div>
           <div className="form-group">
             <label className="form-label">ราคาเป้าหมาย (฿)</label>
             <input type="number" step="0.01" className="form-input mono" placeholder="0.00" {...register('target_price')} />
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div className="form-group">
+            <label className="form-label">Graph</label>
+            <input
+              type="url"
+              className="form-input"
+              placeholder="https://..."
+              autoComplete="url"
+              {...register('graph_url')}
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Link</label>
+            <input
+              type="url"
+              className="form-input"
+              placeholder="https://..."
+              autoComplete="url"
+              {...register('link_url')}
+            />
           </div>
         </div>
 

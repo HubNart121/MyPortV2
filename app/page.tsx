@@ -3,61 +3,20 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { getSupabase } from '@/lib/supabase';
+import {
+  fetchPortfolio,
+  fetchAllTrades,
+  fetchAllDividends,
+} from '@/lib/services/portfolioService';
+import { fetchCashTransactions } from '@/lib/services/cashTransactionService';
 import { calcStats, formatCurrency, formatNumber } from '@/lib/calculations';
-import type { Stock, BuyRound, RealizedTrade, DividendPayment, StockStatus, AssetType, PortType } from '@/lib/types';
-import { StockCard } from '@/components/StockCard';
-import { FilterBar } from '@/components/FilterBar';
+import type { PortType } from '@/lib/types';
 import { DashboardCharts } from '@/components/DashboardCharts';
 import { PerformanceAnalytics } from '@/components/PerformanceAnalytics';
 import { ToastContainer } from '@/components/Toast';
 
-async function fetchPortfolio() {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('stocks')
-    .select('*, buy_rounds(*), realized_trades(*), dividend_payments(*)')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return (data ?? []) as (Stock & { buy_rounds: BuyRound[]; realized_trades: RealizedTrade[]; dividend_payments: DividendPayment[] })[];
-}
-
-async function fetchAllTrades() {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('realized_trades')
-    .select('*, stocks(symbol, port_type)')
-    .order('sell_date', { ascending: false })
-    .limit(50000);
-  if (error) throw error;
-  return (data ?? []).map((t: any) => ({
-    ...t,
-    symbol: t.stocks?.symbol ?? '',
-    port_type: t.port_type || t.stocks?.port_type || 'Private',
-  })) as (RealizedTrade & { symbol: string; port_type: string })[];
-}
-
-async function fetchAllDividends() {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('dividend_payments')
-    .select('*, stocks(symbol, port_type)')
-    .order('pay_date', { ascending: false })
-    .limit(50000);
-  if (error) throw error;
-  return (data ?? []).map((d: any) => ({
-    ...d,
-    symbol: d.stocks?.symbol ?? '',
-    port_type: d.stocks?.port_type || 'Private',
-  })) as (DividendPayment & { symbol: string; port_type: string })[];
-}
-
 export default function DashboardPage() {
-  const [filterStatus, setFilterStatus] = useState<StockStatus | 'All'>('All');
-  const [filterType, setFilterType] = useState<AssetType | 'All'>('All');
   const [filterPort, setFilterPort] = useState<PortType | 'All'>('All');
-  const [activeSort, setActiveSort] = useState<string>('created_desc');
-  const [searchQuery, setSearchQuery] = useState('');
 
   const { data: rawStocks = [], isLoading, error } = useQuery({
     queryKey: ['portfolio'],
@@ -72,6 +31,11 @@ export default function DashboardPage() {
   const { data: allDividends = [] } = useQuery({
     queryKey: ['all-dividends'],
     queryFn: fetchAllDividends,
+  });
+
+  const { data: cashTransactions = [] } = useQuery({
+    queryKey: ['cash-transactions'],
+    queryFn: fetchCashTransactions,
   });
 
   const stocks = useMemo(() =>
@@ -89,43 +53,41 @@ export default function DashboardPage() {
     return Array.from(ports).sort();
   }, [rawStocks]);
 
-  const filtered = useMemo(() => {
-    let result = stocks.filter((s) => {
-      const statusOk = filterStatus === 'All' || s.status === filterStatus;
-      const typeOk = filterType === 'All' || s.asset_type === filterType;
-      const portOk = filterPort === 'All' || s.port_type === filterPort;
-      const searchOk = searchQuery === '' || s.symbol.toUpperCase().includes(searchQuery.toUpperCase());
-      return statusOk && typeOk && portOk && searchOk;
-    });
+  const dashboardStocks = useMemo(
+    () => filterPort === 'All'
+      ? stocks
+      : stocks.filter((stock) => stock.port_type === filterPort),
+    [filterPort, stocks],
+  );
 
-    result = result.sort((a, b) => {
-      switch (activeSort) {
-        case 'symbol_asc':
-          return a.symbol.localeCompare(b.symbol);
-        case 'invested_desc':
-          return b.total_invested - a.total_invested;
-        case 'profit_desc':
-          return b.expected_profit - a.expected_profit;
-        case 'profit_asc':
-          return a.expected_profit - b.expected_profit;
-        case 'yield_desc':
-          return (b.dividend_yield_pct || 0) - (a.dividend_yield_pct || 0);
-        case 'created_desc':
-        default:
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      }
-    });
+  // Portfolio summary stats on Dashboard are scoped only by the top port filter.
+  const totalInvested = dashboardStocks.reduce((a, s) => a + s.total_invested, 0);
+  const totalExpectedProfit = dashboardStocks.reduce((a, s) => a + s.expected_profit, 0);
+  const totalDividend = dashboardStocks.reduce((a, s) => a + s.total_dividend, 0);
+  const totalRealizedProfit = dashboardStocks.reduce((a, s) => a + s.total_realized_profit, 0);
+  const totalReceivedDividend = dashboardStocks.reduce((a, s) => a + s.total_received_dividend, 0);
+  const holdCountInFiltered = dashboardStocks.filter((s) => s.status === 'Hold').length;
 
-    return result;
-  }, [stocks, filterStatus, filterType, filterPort, activeSort, searchQuery]);
+  const portCashBalance = useMemo(() => {
+    const portStocks = filterPort === 'All'
+      ? stocks
+      : stocks.filter((stock) => stock.port_type === filterPort);
+    const portTransactions = filterPort === 'All'
+      ? cashTransactions
+      : cashTransactions.filter((transaction) => transaction.port_type === filterPort);
 
-  // Portfolio summary stats (Now calculated from filtered stocks)
-  const totalInvested = filtered.reduce((a, s) => a + s.total_invested, 0);
-  const totalExpectedProfit = filtered.reduce((a, s) => a + s.expected_profit, 0);
-  const totalDividend = filtered.reduce((a, s) => a + s.total_dividend, 0);
-  const totalRealizedProfit = filtered.reduce((a, s) => a + s.total_realized_profit, 0);
-  const totalReceivedDividend = filtered.reduce((a, s) => a + s.total_received_dividend, 0);
-  const holdCountInFiltered = filtered.filter((s) => s.status === 'Hold').length;
+    const deposits = portTransactions
+      .filter((transaction) => transaction.type === 'deposit')
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+    const withdrawals = portTransactions
+      .filter((transaction) => transaction.type === 'withdrawal')
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+    const currentInvestment = portStocks.reduce((sum, stock) => sum + stock.total_invested, 0);
+    const realizedProfit = portStocks.reduce((sum, stock) => sum + stock.total_realized_profit, 0);
+    const receivedDividend = portStocks.reduce((sum, stock) => sum + stock.total_received_dividend, 0);
+
+    return (deposits - withdrawals) - currentInvestment + realizedProfit + receivedDividend;
+  }, [cashTransactions, filterPort, stocks]);
 
   // Realized Trade Win / Loss stats for top summary
   const topTradeStats = useMemo(() => {
@@ -141,7 +103,7 @@ export default function DashboardPage() {
 
       const totalCost = t.avg_cost_at_sell && t.avg_cost_at_sell > 0
         ? t.shares * t.avg_cost_at_sell
-        : (t.sell_price * t.shares) - t.profit;
+        : (t.sell_price * t.shares) - (t.sell_fee ?? 0) - t.profit;
 
       const pct = totalCost > 0 ? (t.profit / totalCost) * 100 : 0;
 
@@ -158,16 +120,16 @@ export default function DashboardPage() {
   // Pie Chart Data
   const portData = useMemo(() => {
     const map: Record<string, number> = {};
-    filtered.forEach(s => {
+    dashboardStocks.forEach(s => {
       if (s.total_invested <= 0) return;
       map[s.port_type] = (map[s.port_type] || 0) + s.total_invested;
     });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
-  }, [filtered]);
+  }, [dashboardStocks]);
 
   const sectorData = useMemo(() => {
     const map: Record<string, number> = {};
-    filtered.forEach(s => {
+    dashboardStocks.forEach(s => {
       if (s.total_invested <= 0) return;
       const key = s.sector || 'Other';
       map[key] = (map[key] || 0) + s.total_invested;
@@ -175,22 +137,28 @@ export default function DashboardPage() {
     return Object.entries(map)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [filtered]);
+  }, [dashboardStocks]);
 
   const assetData = useMemo(() => {
     const map: Record<string, number> = {};
-    filtered.forEach(s => {
+    dashboardStocks.forEach(s => {
       if (s.total_invested <= 0) return;
       map[s.asset_type] = (map[s.asset_type] || 0) + s.total_invested;
     });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
-  }, [filtered]);
+  }, [dashboardStocks]);
+
+  const symbolData = useMemo(() => dashboardStocks
+    .filter((stock) => stock.active_shares > 0 && stock.total_invested > 0)
+    .map((stock) => ({ name: stock.symbol.toUpperCase(), value: stock.total_invested }))
+    .sort((a, b) => b.value - a.value),
+  [dashboardStocks]);
 
   const stackedData = useMemo(() => {
     const portMap: Record<string, any> = {};
     const sectorSet = new Set<string>();
     
-    filtered.forEach(s => {
+    dashboardStocks.forEach(s => {
       if (s.total_invested <= 0) return;
       const port = s.port_type;
       const sector = s.sector || 'Other';
@@ -207,7 +175,7 @@ export default function DashboardPage() {
       data: Object.values(portMap).sort((a, b) => b.total - a.total),
       sectors: Array.from(sectorSet).sort()
     };
-  }, [filtered]);
+  }, [dashboardStocks]);
 
   if (isLoading) {
     return (
@@ -238,10 +206,13 @@ export default function DashboardPage() {
           <div>
             <div className="page-title">PORTFOLIO OVERVIEW</div>
             <div className="page-subtitle" style={{ color: 'var(--text-secondary)' }}>
-              <span className="mono" style={{ color: 'var(--amber)' }}>{filtered.length}</span> หุ้นที่แสดง ·{' '}
+              <span className="mono" style={{ color: 'var(--amber)' }}>{dashboardStocks.length}</span> หุ้นที่แสดง ·{' '}
               <span className="mono" style={{ color: 'var(--amber)' }}>{holdCountInFiltered}</span> Hold (จากทั้งหมด {stocks.length})
             </div>
           </div>
+          <Link href="/portfolio" className="btn btn-secondary">
+            Portfolio
+          </Link>
           <Link href="/stocks/new" className="btn btn-primary">
             + เพิ่มหุ้นใหม่
           </Link>
@@ -303,6 +274,18 @@ export default function DashboardPage() {
             <div className="stat-label">เงินลงทุนปัจจุบัน</div>
             <div className="stat-value amber">{formatCurrency(totalInvested)}</div>
             <div className="stat-sub" style={{ color: 'var(--text-secondary)' }}>Current holdings only</div>
+          </div>
+          <div className="stat-card" style={{ borderLeft: `2px solid ${portCashBalance >= 0 ? '#4A9EF5' : 'var(--red)'}` }}>
+            <div className="stat-label">เงินคงเหลือในพอร์ต</div>
+            <div
+              className={`stat-value ${portCashBalance >= 0 ? '' : 'red'}`}
+              style={{ color: portCashBalance >= 0 ? '#4A9EF5' : undefined }}
+            >
+              {formatCurrency(portCashBalance)}
+            </div>
+            <div className="stat-sub" style={{ color: 'var(--text-secondary)' }}>
+              ฝากสุทธิ − ทุนปัจจุบัน + กำไรขาย + ปันผลรับจริง · {filterPort === 'All' ? 'ทุกพอร์ต' : filterPort}
+            </div>
           </div>
           <div className="stat-card">
             <div className="stat-label">ปันผลรวมคาดการณ์</div>
@@ -367,12 +350,10 @@ export default function DashboardPage() {
 
         {/* Realized Performance & Dividend Analytics Section */}
         {(() => {
-          const allBuys = rawStocks.flatMap((s) => (s.buy_rounds ?? []).map((b) => ({ ...b, port_type: s.port_type })));
           return (
             <PerformanceAnalytics
               allTrades={allTrades}
               allDividends={allDividends}
-              allBuys={allBuys}
               selectedPort={filterPort}
               onPortChange={setFilterPort}
             />
@@ -384,67 +365,10 @@ export default function DashboardPage() {
           portData={portData} 
           sectorData={sectorData} 
           assetData={assetData} 
+          symbolData={symbolData}
           stackedData={stackedData}
         />
 
-        <div className="divider" />
-
-        {/* Filters */}
-        <FilterBar
-          onStatusChange={setFilterStatus}
-          onAssetTypeChange={setFilterType}
-          onPortChange={setFilterPort}
-          onSortChange={setActiveSort}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          activeStatus={filterStatus}
-          activeType={filterType}
-          activePort={filterPort}
-          activeSort={activeSort}
-          totalCount={stocks.length}
-          filteredCount={filtered.length}
-          availablePorts={uniquePorts}
-        />
-
-        {/* Stock list */}
-        {filtered.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">◈</div>
-            <div className="empty-state-title">
-              {stocks.length === 0 ? 'ยังไม่มีหุ้นในพอร์ต' : 'ไม่พบหุ้นที่ตรงกับ Filter'}
-            </div>
-            <div className="empty-state-desc">
-              {stocks.length === 0 ? 'เริ่มต้นด้วยการเพิ่มหุ้นตัวแรก' : 'ลองเปลี่ยน Filter เพื่อดูผลลัพธ์อื่น'}
-            </div>
-            {stocks.length === 0 && (
-              <Link href="/stocks/new" className="btn btn-primary">+ เพิ่มหุ้นใหม่</Link>
-            )}
-          </div>
-        ) : (
-          <div className="animate-stagger" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {/* Table header (Desktop only) */}
-            <div className="stock-grid-layout desktop-only"
-              style={{
-                padding: '6px 20px',
-                fontSize: '10px',
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.12em',
-                color: 'var(--text-muted)',
-              }}
-            >
-              <div>Symbol</div>
-              <div>Avg Cost</div>
-              <div className="tablet-hide">Invested</div>
-              <div className="tablet-hide">Div Yield</div>
-              <div className="tablet-hide">Expected Net</div>
-              <div style={{ textAlign: 'right' }}>Type / Status</div>
-            </div>
-            {filtered.map((s) => (
-              <StockCard key={s.id} stock={s} />
-            ))}
-          </div>
-        )}
       </div>
       <ToastContainer />
     </>

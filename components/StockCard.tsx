@@ -1,24 +1,56 @@
 'use client';
 
-import Link from 'next/link';
+import type { KeyboardEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import type { StockWithStats } from '@/lib/types';
 import { formatNumber, formatCurrency } from '@/lib/calculations';
 import { StatusBadge, AssetBadge, PortBadge } from './Badges';
+import { ShareStockButton } from './ShareStockButton';
 
 interface StockCardProps {
   stock: StockWithStats;
 }
 
+function formatSignedCurrency(value: number) {
+  return value > 0 ? `+${formatCurrency(value)}` : formatCurrency(value);
+}
+
+function formatSignedPercent(value: number) {
+  const formatted = `${formatNumber(value)}%`;
+  return value > 0 ? `+${formatted}` : formatted;
+}
+
 export function StockCard({ stock }: StockCardProps) {
+  const router = useRouter();
+  const isSoldOff = stock.status === 'Sold Off';
+  const hasRealizedTrades = (stock.realized_trades?.length ?? 0) > 0;
+  const displayedProfit = isSoldOff ? stock.total_realized_profit : stock.expected_profit;
   const profitClass =
-    stock.expected_profit > 0 ? 'profit' : stock.expected_profit < 0 ? 'loss' : 'neutral';
+    displayedProfit > 0 ? 'profit' : displayedProfit < 0 ? 'loss' : 'neutral';
+  const profitLabel = isSoldOff ? 'Realized P/L' : 'Expected Net';
 
   const computed_dividend = (stock.dividend_per_share || 0) * (stock.total_shares || 0);
+  const stockHref = `/stocks/${stock.id}`;
+
+  const openStockDetail = () => {
+    router.push(stockHref);
+  };
+
+  const handleRowKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+
+    event.preventDefault();
+    router.push(stockHref);
+  };
 
   return (
-    <Link
-      href={`/stocks/${stock.id}`}
+    <div
       className="stock-row stock-grid-layout"
+      role="link"
+      tabIndex={0}
+      onClick={openStockDetail}
+      onKeyDown={handleRowKeyDown}
+      aria-label={`เปิดรายละเอียดหุ้น ${stock.symbol}`}
     >
       {/* Symbol + name */}
       <div>
@@ -69,15 +101,27 @@ export function StockCard({ stock }: StockCardProps) {
         </div>
       </div>
 
-      {/* Expected Profit */}
+      {/* Expected or realized profit */}
       <div className="tablet-hide">
         <div className="internal-label" style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '3px' }}>
-          Expected Net
+          {profitLabel}
         </div>
         <div className={`mono ${profitClass}`} style={{ fontWeight: 700 }}>
-          {stock.total_shares > 0 ? formatCurrency(stock.expected_profit) : '—'}
+          {isSoldOff
+            ? (hasRealizedTrades ? formatSignedCurrency(stock.total_realized_profit) : '—')
+            : (stock.total_shares > 0 ? formatCurrency(stock.expected_profit) : '—')}
         </div>
-        {stock.target_price > 0 && (
+        {isSoldOff && hasRealizedTrades && (
+          <div className={`mono ${profitClass}`} style={{ fontSize: '11px', fontWeight: 700, marginTop: '1px' }}>
+            {stock.realized_profit_pct > 0
+              ? 'กำไร '
+              : stock.realized_profit_pct < 0
+                ? 'ขาดทุน '
+                : ''}
+            {formatSignedPercent(stock.realized_profit_pct)}
+          </div>
+        )}
+        {!isSoldOff && stock.target_price > 0 && (
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
             target ฿{formatNumber(stock.target_price)}
           </div>
@@ -91,8 +135,22 @@ export function StockCard({ stock }: StockCardProps) {
           <div className="mono" style={{ fontSize: '13px', fontWeight: 700 }}>{formatCurrency(stock.total_invested)}</div>
         </div>
         <div>
-          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '2px' }}>Expected Net</div>
-          <div className={`mono ${profitClass}`} style={{ fontSize: '13px', fontWeight: 700 }}>{formatCurrency(stock.expected_profit)}</div>
+          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '2px' }}>{profitLabel}</div>
+          <div className={`mono ${profitClass}`} style={{ fontSize: '13px', fontWeight: 700 }}>
+            {isSoldOff
+              ? (hasRealizedTrades ? formatSignedCurrency(stock.total_realized_profit) : '—')
+              : formatCurrency(stock.expected_profit)}
+          </div>
+          {isSoldOff && hasRealizedTrades && (
+            <div className={`mono ${profitClass}`} style={{ fontSize: '11px', fontWeight: 700, marginTop: '1px' }}>
+              {stock.realized_profit_pct > 0
+                ? 'กำไร '
+                : stock.realized_profit_pct < 0
+                  ? 'ขาดทุน '
+                  : ''}
+              {formatSignedPercent(stock.realized_profit_pct)}
+            </div>
+          )}
         </div>
         <div>
           <div style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '2px' }}>Div Yield</div>
@@ -105,10 +163,16 @@ export function StockCard({ stock }: StockCardProps) {
 
       {/* Badges Container */}
       <div className="stock-badges-container">
+        <ShareStockButton
+          stockId={stock.id}
+          symbol={stock.symbol}
+          className="btn btn-ghost btn-sm"
+          compact
+        />
         <PortBadge portType={stock.port_type} />
         <StatusBadge status={stock.status} />
         <AssetBadge assetType={stock.asset_type} />
       </div>
-    </Link>
+    </div>
   );
 }

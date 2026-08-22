@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 interface ThaiDateInputProps {
   value: string; // ISO date string: YYYY-MM-DD
@@ -24,7 +24,12 @@ const THAI_MONTHS = [
   'ธันวาคม (12)',
 ];
 
+const FUTURE_YEAR_RANGE = 2;
+const PAST_YEAR_RANGE = 20;
+
 export function ThaiDateInput({ value, onChange, required, className = 'form-input mono' }: ThaiDateInputProps) {
+  const [isCustomYear, setIsCustomYear] = useState(false);
+
   // Parse YYYY-MM-DD
   const { day, month, yearBE } = useMemo(() => {
     if (!value) {
@@ -47,15 +52,23 @@ export function ThaiDateInput({ value, onChange, required, className = 'form-inp
     return { day: '01', month: '01', yearBE: 2569 };
   }, [value]);
 
-  // Generate Year list in พ.ศ. (e.g. 2570 down to 2550)
+  // Keep the normal list compact (current year + 2 down to 20 years ago).
+  // Existing values outside this range are still included, and new out-of-range
+  // values can be entered through the custom-year option.
   const yearsBE = useMemo(() => {
     const currentBE = new Date().getFullYear() + 543;
     const list: number[] = [];
-    for (let y = currentBE + 2; y >= currentBE - 20; y--) {
+    for (let y = currentBE + FUTURE_YEAR_RANGE; y >= currentBE - PAST_YEAR_RANGE; y--) {
       list.push(y);
     }
+
+    if (!list.includes(yearBE)) {
+      list.push(yearBE);
+      list.sort((a, b) => b - a);
+    }
+
     return list;
-  }, []);
+  }, [yearBE]);
 
   const handleUpdate = (newDay: string, newMonth: string, newYearBE: number) => {
     const yearCE = newYearBE - 543;
@@ -104,19 +117,54 @@ export function ThaiDateInput({ value, onChange, required, className = 'form-inp
       </select>
 
       {/* Year BE Select */}
-      <select
-        className={className}
-        value={yearBE}
-        onChange={(e) => handleUpdate(day, month, parseInt(e.target.value, 10))}
-        required={required}
-        style={{ padding: '6px 8px', fontSize: '13px', fontWeight: 700, color: 'var(--amber)' }}
-      >
-        {yearsBE.map((y) => (
-          <option key={y} value={y}>
-            พ.ศ. {y}
-          </option>
-        ))}
-      </select>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
+        <select
+          className={className}
+          value={isCustomYear ? 'custom' : yearBE}
+          onChange={(e) => {
+            if (e.target.value === 'custom') {
+              const currentBE = new Date().getFullYear() + 543;
+              const firstCustomYear = currentBE + FUTURE_YEAR_RANGE + 1;
+              setIsCustomYear(true);
+              handleUpdate(day, month, firstCustomYear);
+              return;
+            }
+
+            setIsCustomYear(false);
+            handleUpdate(day, month, parseInt(e.target.value, 10));
+          }}
+          required={required}
+          style={{ padding: '6px 8px', fontSize: '13px', fontWeight: 700, color: 'var(--amber)' }}
+        >
+          {yearsBE.map((y) => (
+            <option key={y} value={y}>
+              พ.ศ. {y}
+            </option>
+          ))}
+          <option value="custom">กำหนดปีอื่น...</option>
+        </select>
+
+        {isCustomYear && (
+          <input
+            type="number"
+            className={className}
+            value={yearBE}
+            min={2400}
+            max={9999}
+            step={1}
+            required={required}
+            aria-label="ระบุปี พ.ศ."
+            onChange={(e) => {
+              if (e.target.value === '') return;
+              const customYearBE = parseInt(e.target.value, 10);
+              if (!Number.isNaN(customYearBE)) {
+                handleUpdate(day, month, customYearBE);
+              }
+            }}
+            style={{ padding: '6px 8px', fontSize: '13px', fontWeight: 700, color: 'var(--amber)' }}
+          />
+        )}
+      </div>
     </div>
   );
 }

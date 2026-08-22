@@ -1,0 +1,54 @@
+# Firebase App Hosting runtime settings.
+# NEXT_PUBLIC_FIREBASE_* values are configured in the App Hosting console so
+# project-specific values are not committed to source control.
+runConfig:
+  minInstances: 0
+  maxInstances: 3
+  concurrency: 40
+  cpu: 1
+  memoryMiB: 512
+
+env:
+  - variable: APP_ORIGIN
+    value: "https://my-port-v2--myport-v2.asia-southeast1.hosted.app"
+    availability:
+      - RUNTIME
+  - variable: ALLOWED_GOOGLE_EMAIL
+    value: "sl@brt.co.th,asiametalnart@gmail.com,iphonenart@gmail.com"
+    availability:
+      - RUNTIME
+  - variable: NEXT_PUBLIC_ALLOWED_GOOGLE_EMAIL
+    value: "sl@brt.co.th,asiametalnart@gmail.com,iphonenart@gmail.com"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: AIzaSyBF_Ig1_ox-6RObs4NnK_QU6GcXUxlJuyw
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: myport-v2.firebaseapp.com
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: myport-v2
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: myport-v2.firebasestorage.app
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "475055363019"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: "1:475055363019:web:9eed1b5bd89f78352b5c4e"
+    availability:
+      - BUILD
+      - RUNTIME

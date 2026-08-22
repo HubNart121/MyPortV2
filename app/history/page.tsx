@@ -3,29 +3,11 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { getSupabase } from '@/lib/supabase';
+import { fetchGlobalHistory } from '@/lib/services/portfolioService';
 import { formatCurrency, formatNumber, formatThaiDate } from '@/lib/calculations';
-import type { BuyRound, RealizedTrade, Stock } from '@/lib/types';
+import { downloadTradingHistoryExcel } from '@/lib/tradingHistoryExcel';
 import { PortBadge } from '@/components/Badges';
 import { ToastContainer } from '@/components/Toast';
-
-async function fetchGlobalHistory() {
-  const supabase = getSupabase();
-  
-  // Fetch all buys with stock info
-  const { data: buys, error: bErr } = await supabase
-    .from('buy_rounds')
-    .select('*, stocks(*)');
-  if (bErr) throw bErr;
-
-  // Fetch all sells with stock info
-  const { data: sells, error: sErr } = await supabase
-    .from('realized_trades')
-    .select('*, stocks(*)');
-  if (sErr) throw sErr;
-
-  return { buys, sells };
-}
 
 interface UnifiedTransaction {
   id: string;
@@ -35,7 +17,9 @@ interface UnifiedTransaction {
   shares: number;
   price: number;
   total: number;
+  fee: number;
   profit?: number;
+  profit_pct?: number;
   port_type: string;
   stock_id: string;
 }
@@ -60,7 +44,8 @@ export default function HistoryPage() {
         symbol: b.stocks?.symbol || '?',
         shares: b.shares,
         price: b.price,
-        total: b.shares * b.price,
+        total: (b.shares * b.price) + Number(b.buy_fee ?? 0),
+        fee: Number(b.buy_fee ?? 0),
         port_type: b.stocks?.port_type || 'Private',
         stock_id: b.stock_id,
       });
@@ -68,6 +53,12 @@ export default function HistoryPage() {
     
     // Process Sells
     data.sells?.forEach((s: any) => {
+      const parsedProfit = Number(s.profit);
+      const profit = s.profit !== null && s.profit !== undefined && Number.isFinite(parsedProfit)
+        ? parsedProfit
+        : undefined;
+      const costBasis = Number(s.avg_cost_at_sell ?? 0) * Number(s.shares ?? 0);
+
       unified.push({
         id: s.id,
         type: 'SELL',
@@ -75,8 +66,10 @@ export default function HistoryPage() {
         symbol: s.stocks?.symbol || '?',
         shares: s.shares,
         price: s.sell_price,
-        total: s.shares * s.sell_price,
-        profit: s.profit,
+        total: (s.shares * s.sell_price) - Number(s.sell_fee ?? 0),
+        fee: Number(s.sell_fee ?? 0),
+        profit,
+        profit_pct: profit !== undefined && costBasis > 0 ? profit / costBasis : undefined,
         port_type: s.port_type,
         stock_id: s.stock_id,
       });
@@ -109,6 +102,14 @@ export default function HistoryPage() {
             <div className="page-title">TRADING HISTORY</div>
             <div className="page-subtitle">ประวัติการซื้อขายทั้งหมดเรียงตามวันเวลา</div>
           </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => downloadTradingHistoryExcel(history)}
+            disabled={history.length === 0}
+          >
+            ⇩ Report Excel
+          </button>
         </div>
 
         {history.length === 0 ? (
@@ -179,6 +180,9 @@ export default function HistoryPage() {
                 <div>
                    <div className="internal-label" style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '3px' }}>Price</div>
                    <div className="mono" style={{ fontSize: '13px' }}>{formatCurrency(item.price)}</div>
+                   <div className="mono" style={{ marginTop: '3px', color: 'var(--text-muted)', fontSize: '10px' }}>
+                     Fee: {formatCurrency(item.fee)}
+                   </div>
                 </div>
                 <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', width: '100%' }} className="history-last-col">
                   <div className="internal-label" style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '3px' }}>Total / Profit</div>
@@ -186,6 +190,9 @@ export default function HistoryPage() {
                   {item.type === 'SELL' && item.profit !== undefined && (
                     <div className={`mono ${item.profit >= 0 ? 'profit' : 'loss'}`} style={{ fontSize: '11px', fontWeight: 700 }}>
                       {item.profit >= 0 ? '+' : ''}{formatCurrency(item.profit)} Profit
+                      {item.profit_pct !== undefined && (
+                        <> ({item.profit_pct >= 0 ? '+' : ''}{formatNumber(item.profit_pct * 100, 2)}%)</>
+                      )}
                     </div>
                   )}
                 </div>

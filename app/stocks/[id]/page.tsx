@@ -4,8 +4,17 @@ import { use, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getSupabase } from '@/lib/supabase';
-import { calcStats, formatCurrency, formatNumber, formatThaiDate } from '@/lib/calculations';
+import {
+  addStockChild,
+  deleteStock,
+  deleteStockChild,
+  fetchStock,
+  fetchStockOptions,
+  findDuplicateStock,
+  updateStock,
+  updateStockChild,
+} from '@/lib/services/portfolioService';
+import { calcStats, formatCurrency, formatNumber, formatThaiDate, resolveAutomaticStockStatus } from '@/lib/calculations';
 import type { Stock, BuyRound, RealizedTrade, DividendPayment } from '@/lib/types';
 import { BuyRoundTable } from '@/components/BuyRoundTable';
 import { DividendTable } from '@/components/DividendTable';
@@ -17,31 +26,11 @@ import { StockForm } from '@/components/StockForm';
 import type { StockFormData } from '@/components/StockForm';
 import { SellModal } from '@/components/SellModal';
 import type { SellFormData } from '@/components/SellModal';
+import { DividendAccumulationChart } from '@/components/DividendAccumulationChart';
+import { ShareStockButton } from '@/components/ShareStockButton';
 
 interface PageProps {
   params: Promise<{ id: string }>;
-}
-
-async function fetchStock(id: string) {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('stocks')
-    .select('*, buy_rounds(*), realized_trades(*), dividend_payments(*)')
-    .eq('id', id)
-    .single();
-  if (error) throw error;
-  return data as Stock & { buy_rounds: BuyRound[]; realized_trades: RealizedTrade[]; dividend_payments: DividendPayment[] };
-}
-
-async function fetchAllOptions() {
-  const supabase = getSupabase();
-  const { data } = await supabase.from('stocks').select('port_type, status, asset_type');
-  if (!data) return { ports: [], statuses: [], assetTypes: [] };
-  return {
-    ports: Array.from(new Set(data.map((s: any) => s.port_type).filter(Boolean))) as string[],
-    statuses: Array.from(new Set(data.map((s: any) => s.status).filter(Boolean))) as string[],
-    assetTypes: Array.from(new Set(data.map((s: any) => s.asset_type).filter(Boolean))) as string[],
-  };
 }
 
 export default function StockDetailPage({ params }: PageProps) {
@@ -53,6 +42,7 @@ export default function StockDetailPage({ params }: PageProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [isSelling, setIsSelling] = useState(false);
+  const [editingSell, setEditingSell] = useState<RealizedTrade | null>(null);
   const [selling, setSelling] = useState(false);
 
   const { data: raw, isLoading, error } = useQuery({
@@ -62,7 +52,7 @@ export default function StockDetailPage({ params }: PageProps) {
 
   const { data: existingOptions } = useQuery({
     queryKey: ['stock_options'],
-    queryFn: fetchAllOptions,
+    queryFn: fetchStockOptions,
   });
 
   if (isLoading) {
@@ -91,7 +81,7 @@ export default function StockDetailPage({ params }: PageProps) {
   const rounds = [...(raw.buy_rounds ?? [])].sort(
     (a, b) => new Date(a.buy_date).getTime() - new Date(b.buy_date).getTime()
   );
-  const sells = [...(raw.realized_trades ?? [])].sort(
+  const sells = [...(stats.realized_trades ?? [])].sort(
     (a, b) => new Date(a.sell_date).getTime() - new Date(b.sell_date).getTime()
   );
   const dividends = [...(raw.dividend_payments ?? [])].sort(
@@ -99,14 +89,14 @@ export default function StockDetailPage({ params }: PageProps) {
   );
 
   const handleAddRound = async (data: BuyRoundFormData) => {
-    const supabase = getSupabase();
-    const { error: err } = await supabase.from('buy_rounds').insert({
-      stock_id: id,
+    await addStockChild<BuyRound>(id, 'buy_rounds', {
       buy_date: data.buy_date,
       price: data.price,
       shares: data.shares,
+      buy_fee: data.buy_fee,
+      note: data.note?.trim() || null,
+      link_url: data.link_url?.trim() || null,
     });
-    if (err) { toast.show(err.message, 'error'); throw err; }
     toast.show('บันทึกรอบซื้อสำเร็จ', 'success');
     queryClient.invalidateQueries({ queryKey: ['stock', id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio'] });
@@ -114,9 +104,7 @@ export default function StockDetailPage({ params }: PageProps) {
   };
 
   const handleDeleteRound = async (roundId: string) => {
-    const supabase = getSupabase();
-    const { error: err } = await supabase.from('buy_rounds').delete().eq('id', roundId);
-    if (err) { toast.show(err.message, 'error'); throw err; }
+    await deleteStockChild(id, 'buy_rounds', roundId);
     toast.show('ลบรอบซื้อแล้ว', 'success');
     queryClient.invalidateQueries({ queryKey: ['stock', id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio'] });
@@ -124,16 +112,14 @@ export default function StockDetailPage({ params }: PageProps) {
   };
 
   const handleEditRound = async (roundId: string, data: BuyRoundFormData) => {
-    const supabase = getSupabase();
-    const { error: err } = await supabase
-      .from('buy_rounds')
-      .update({
+    await updateStockChild(id, 'buy_rounds', roundId, {
         buy_date: data.buy_date,
         price: data.price,
         shares: data.shares,
-      })
-      .eq('id', roundId);
-    if (err) { toast.show(err.message, 'error'); throw err; }
+        buy_fee: data.buy_fee,
+        note: data.note?.trim() || null,
+        link_url: data.link_url?.trim() || null,
+      });
     toast.show('แก้ไขรอบซื้อสำเร็จ', 'success');
     queryClient.invalidateQueries({ queryKey: ['stock', id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio'] });
@@ -143,9 +129,7 @@ export default function StockDetailPage({ params }: PageProps) {
   const handleAddDividend = async (data: DividendPaymentFormData) => {
     const gross = data.dividend_per_share * data.shares_held;
     const net = gross * (1 - (data.tax_pct ?? 10) / 100);
-    const supabase = getSupabase();
-    const { error: err } = await supabase.from('dividend_payments').insert({
-      stock_id: id,
+    await addStockChild<DividendPayment>(id, 'dividend_payments', {
       pay_date: data.pay_date,
       dividend_per_share: data.dividend_per_share,
       shares_held: data.shares_held,
@@ -153,7 +137,6 @@ export default function StockDetailPage({ params }: PageProps) {
       gross_amount: gross,
       net_amount: net,
     });
-    if (err) { toast.show(err.message, 'error'); throw err; }
     toast.show('บันทึกรับเงินปันผลสำเร็จ', 'success');
     queryClient.invalidateQueries({ queryKey: ['stock', id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio'] });
@@ -163,19 +146,14 @@ export default function StockDetailPage({ params }: PageProps) {
   const handleEditDividend = async (divId: string, data: DividendPaymentFormData) => {
     const gross = data.dividend_per_share * data.shares_held;
     const net = gross * (1 - (data.tax_pct ?? 10) / 100);
-    const supabase = getSupabase();
-    const { error: err } = await supabase
-      .from('dividend_payments')
-      .update({
+    await updateStockChild(id, 'dividend_payments', divId, {
         pay_date: data.pay_date,
         dividend_per_share: data.dividend_per_share,
         shares_held: data.shares_held,
         tax_pct: data.tax_pct,
         gross_amount: gross,
         net_amount: net,
-      })
-      .eq('id', divId);
-    if (err) { toast.show(err.message, 'error'); throw err; }
+      });
     toast.show('แก้ไขรายการปันผลสำเร็จ', 'success');
     queryClient.invalidateQueries({ queryKey: ['stock', id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio'] });
@@ -183,9 +161,7 @@ export default function StockDetailPage({ params }: PageProps) {
   };
 
   const handleDeleteDividend = async (divId: string) => {
-    const supabase = getSupabase();
-    const { error: err } = await supabase.from('dividend_payments').delete().eq('id', divId);
-    if (err) { toast.show(err.message, 'error'); throw err; }
+    await deleteStockChild(id, 'dividend_payments', divId);
     toast.show('ลบรายการเงินปันผลแล้ว', 'success');
     queryClient.invalidateQueries({ queryKey: ['stock', id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio'] });
@@ -194,18 +170,16 @@ export default function StockDetailPage({ params }: PageProps) {
 
   const handleSell = async (data: SellFormData & { profit: number; avg_cost_at_sell: number }) => {
     setSelling(true);
-    const supabase = getSupabase();
-    const { error: err } = await supabase.from('realized_trades').insert({
-      stock_id: id,
+    await addStockChild<RealizedTrade>(id, 'realized_trades', {
       sell_date: data.sell_date,
       shares: data.shares,
       sell_price: data.sell_price,
+      sell_fee: data.sell_fee,
       avg_cost_at_sell: data.avg_cost_at_sell,
       profit: data.profit,
       port_type: raw.port_type,
     });
     setSelling(false);
-    if (err) { toast.show(err.message, 'error'); throw err; }
     toast.show('บันทึกการขายสำเร็จ', 'success');
     setIsSelling(false);
     queryClient.invalidateQueries({ queryKey: ['stock', id] });
@@ -214,11 +188,29 @@ export default function StockDetailPage({ params }: PageProps) {
     queryClient.invalidateQueries({ queryKey: ['global-history'] });
   };
 
+  const handleEditSell = async (data: SellFormData & { profit: number; avg_cost_at_sell: number }) => {
+    if (!editingSell) return;
+    setSelling(true);
+    await updateStockChild(id, 'realized_trades', editingSell.id, {
+        sell_date: data.sell_date,
+        shares: data.shares,
+        sell_price: data.sell_price,
+        sell_fee: data.sell_fee,
+        avg_cost_at_sell: data.avg_cost_at_sell,
+        profit: data.profit,
+      });
+    setSelling(false);
+    toast.show('แก้ไขรายการขายสำเร็จ', 'success');
+    setEditingSell(null);
+    queryClient.invalidateQueries({ queryKey: ['stock', id] });
+    queryClient.invalidateQueries({ queryKey: ['portfolio'] });
+    queryClient.invalidateQueries({ queryKey: ['all-trades'] });
+    queryClient.invalidateQueries({ queryKey: ['global-history'] });
+  };
+
   const handleDeleteSell = async (sellId: string) => {
     if (!confirm('ยืนยันลบรายการขายนี้?')) return;
-    const supabase = getSupabase();
-    const { error: err } = await supabase.from('realized_trades').delete().eq('id', sellId);
-    if (err) { toast.show(err.message, 'error'); throw err; }
+    await deleteStockChild(id, 'realized_trades', sellId);
     toast.show('ลบรายการขายแล้ว', 'success');
     queryClient.invalidateQueries({ queryKey: ['stock', id] });
     queryClient.invalidateQueries({ queryKey: ['portfolio'] });
@@ -229,8 +221,7 @@ export default function StockDetailPage({ params }: PageProps) {
   const handleDeleteStock = async () => {
     if (!confirm(`ลบหุ้น ${raw.symbol} ทั้งหมด รวมถึงรอบซื้อทั้งหมด?`)) return;
     setDeleting(true);
-    const supabase = getSupabase();
-    await supabase.from('stocks').delete().eq('id', id);
+    await deleteStock(id);
     queryClient.invalidateQueries({ queryKey: ['portfolio'] });
     queryClient.invalidateQueries({ queryKey: ['all-trades'] });
     queryClient.invalidateQueries({ queryKey: ['all-dividends'] });
@@ -241,22 +232,36 @@ export default function StockDetailPage({ params }: PageProps) {
   const handleUpdateStock = async (data: StockFormData) => {
     setUpdating(true);
     try {
-      const supabase = getSupabase();
-      const { error: err } = await supabase
-        .from('stocks')
-        .update({
+      const hasTransactionHistory = (
+        (raw.buy_rounds?.length ?? 0)
+        + (raw.realized_trades?.length ?? 0)
+        + (raw.dividend_payments?.length ?? 0)
+      ) > 0;
+
+      if (hasTransactionHistory && data.port_type !== raw.port_type) {
+        throw new Error('ไม่สามารถเปลี่ยน Port ของหุ้นที่มีประวัติแล้ว กรุณาเพิ่มหุ้น Symbol เดิมใน Port ใหม่');
+      }
+
+      if (data.port_type !== raw.port_type) {
+        const duplicate = await findDuplicateStock(raw.symbol, data.port_type, id);
+        if (duplicate) {
+          throw new Error(`มีหุ้น ${raw.symbol} อยู่ใน Port ${data.port_type} แล้ว`);
+        }
+      }
+
+      await updateStock(id, {
           name: data.name || null,
           sector: data.sector || null,
-          status: data.status,
+          status: resolveAutomaticStockStatus(data.status, stats.active_shares),
           asset_type: data.asset_type,
           port_type: data.port_type,
           dividend_per_share: data.dividend_per_share,
+          current_price: data.current_price,
           target_price: data.target_price,
+          graph_url: data.graph_url?.trim() || null,
+          link_url: data.link_url?.trim() || null,
           note: data.note || null,
-        })
-        .eq('id', id);
-
-      if (err) throw err;
+        });
       toast.show('อัปเดตข้อมูลหุ้นสำเร็จ', 'success');
       setIsEditing(false);
       queryClient.invalidateQueries({ queryKey: ['stock', id] });
@@ -278,11 +283,37 @@ export default function StockDetailPage({ params }: PageProps) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <Link href="/" className="btn btn-ghost" style={{ padding: '6px 8px' }}>←</Link>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                 <div className="page-title mono">{raw.symbol}</div>
                 <PortBadge portType={raw.port_type} />
-                <StatusBadge status={raw.status} />
+                <StatusBadge status={stats.status} />
                 <AssetBadge assetType={raw.asset_type} />
+                {raw.graph_url && (
+                  <a
+                    href={raw.graph_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="filter-chip active mono"
+                    style={{ textDecoration: 'none' }}
+                    aria-label={`เปิด Graph ของ ${raw.symbol}`}
+                    title={raw.graph_url}
+                  >
+                    ↗ Graph
+                  </a>
+                )}
+                {raw.link_url && (
+                  <a
+                    href={raw.link_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="filter-chip active mono"
+                    style={{ textDecoration: 'none' }}
+                    aria-label={`เปิด Link ของ ${raw.symbol}`}
+                    title={raw.link_url}
+                  >
+                    ↗ Link
+                  </a>
+                )}
               </div>
               <div className="page-subtitle">
                 {raw.name || '—'}{raw.sector ? ` · ${raw.sector}` : ''}
@@ -290,11 +321,13 @@ export default function StockDetailPage({ params }: PageProps) {
             </div>
           </div>
           <div className="mobile-only-flex" style={{ display: 'none', gap: '8px', width: '100%', marginTop: '16px' }}>
+            <ShareStockButton stockId={id} symbol={raw.symbol} className="btn btn-secondary btn-sm" style={{ flex: 1 }} compact />
             <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={() => setIsSelling(true)} disabled={stats.total_shares <= 0}>$ ขาย</button>
             <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={() => setIsEditing(true)}>✎ แก้ไข</button>
             <button className="btn btn-danger btn-sm" style={{ flex: 1 }} onClick={handleDeleteStock} disabled={deleting}>{deleting ? '...' : '✕ ลบ'}</button>
           </div>
           <div className="desktop-only" style={{ display: 'flex', gap: '8px' }}>
+            <ShareStockButton stockId={id} symbol={raw.symbol} className="btn btn-secondary btn-sm" />
             <button
               className="btn btn-primary btn-sm"
               onClick={() => setIsSelling(true)}
@@ -323,35 +356,25 @@ export default function StockDetailPage({ params }: PageProps) {
           <SellModal
             symbol={raw.symbol}
             totalShares={stats.total_shares}
-            avgCost={stats.avg_cost}
+            rounds={raw.buy_rounds ?? []}
+            sells={raw.realized_trades ?? []}
             onClose={() => setIsSelling(false)}
             onSubmit={handleSell}
             loading={selling}
           />
         )}
 
-        {/* Edit Modal */}
-        {isEditing && (
-          <div className="modal-overlay">
-            <div className="modal" style={{ maxWidth: '600px' }}>
-              <div className="modal-header">
-                <div className="modal-title mono">EDIT STOCK: {raw.symbol}</div>
-                <button className="btn btn-ghost" onClick={() => setIsEditing(false)}>✕</button>
-              </div>
-              <div className="modal-body">
-                <StockForm
-                  initialData={raw}
-                  onSubmit={handleUpdateStock}
-                  onCancel={() => setIsEditing(false)}
-                  loading={updating}
-                  submitLabel="บันทึกการแก้ไข"
-                  existingPortTypes={existingOptions?.ports}
-                  existingStatuses={existingOptions?.statuses}
-                  existingAssetTypes={existingOptions?.assetTypes}
-                />
-              </div>
-            </div>
-          </div>
+        {editingSell && (
+          <SellModal
+            symbol={raw.symbol}
+            totalShares={stats.total_shares}
+            rounds={raw.buy_rounds ?? []}
+            sells={raw.realized_trades ?? []}
+            initialData={editingSell}
+            onClose={() => setEditingSell(null)}
+            onSubmit={handleEditSell}
+            loading={selling}
+          />
         )}
 
         {/* Summary Cards */}
@@ -376,27 +399,19 @@ export default function StockDetailPage({ params }: PageProps) {
             <div className="stat-sub">Current Invested</div>
           </div>
           <div className="stat-card">
-            <div className="stat-label">อัตราปันผลคาดการณ์</div>
-            <div className="stat-value green mono">
-              {stats.dividend_yield_pct > 0 ? `${formatNumber(stats.dividend_yield_pct)}%` : '—'}
-            </div>
-            <div className="stat-sub">
-              ฿{formatNumber(raw.dividend_per_share, 4)}/หุ้น
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">ปันผลรวมคาดการณ์</div>
-            <div className="stat-value green mono">
-              {stats.total_shares > 0 && stats.total_dividend > 0 ? formatCurrency(stats.total_dividend) : '—'}
-            </div>
-            <div className="stat-sub">ต่อปี (จากหุ้นปัจจุบัน)</div>
-          </div>
-          <div className="stat-card">
             <div className="stat-label">กำไรสุทธิคาดการณ์</div>
             <div className={`stat-value mono ${profitClass}`}>
               {stats.total_shares > 0 ? formatCurrency(stats.expected_profit) : '—'}
             </div>
-            <div className="stat-sub">target ฿{formatNumber(raw.target_price)}</div>
+            <div className="stat-sub">
+              {stats.total_shares > 0 && stats.total_invested > 0 && (
+                <span className={`mono ${stats.expected_profit_pct >= 0 ? 'profit' : 'loss'}`} style={{ fontWeight: 700 }}>
+                  {stats.expected_profit_pct > 0 ? '+' : ''}{formatNumber(stats.expected_profit_pct)}%
+                </span>
+              )}
+              {stats.total_shares > 0 && stats.total_invested > 0 ? ' · ' : ''}
+              target ฿{formatNumber(raw.target_price)}
+            </div>
           </div>
           <div className="stat-card" style={{ borderLeft: '2px solid var(--green)' }}>
             <div className="stat-label">ปันผลสุทธิรับจริง</div>
@@ -416,10 +431,41 @@ export default function StockDetailPage({ params }: PageProps) {
                 {formatCurrency(stats.total_realized_profit)}
               </div>
               <div className="stat-sub">
-                {sells.length} รายการขาย · กำไร-ขาดทุนสุทธิ
+                <span
+                  className={`mono ${stats.realized_profit_pct >= 0 ? 'profit' : 'loss'}`}
+                  style={{ fontWeight: 700 }}
+                >
+                  {stats.realized_profit_pct > 0 ? '+' : ''}
+                  {formatNumber(stats.realized_profit_pct)}%
+                </span>
+                {' '}จากต้นทุนที่ขาย · {sells.length} รายการขาย
               </div>
             </div>
           )}
+          <div className="stat-card" style={{ borderLeft: `2px solid ${stats.total_actual_return >= 0 ? 'var(--green)' : 'var(--red)'}` }}>
+            <div className="stat-label">ผลตอบแทนรวมที่ได้รับจริง</div>
+            <div className={`stat-value mono ${stats.total_actual_return >= 0 ? 'green' : 'red'}`}>
+              {(stats.total_realized_profit !== 0 || stats.total_received_dividend > 0)
+                ? formatCurrency(stats.total_actual_return)
+                : '—'}
+            </div>
+            <div className="stat-sub">
+              {(stats.total_realized_profit !== 0 || stats.total_received_dividend > 0) && stats.total_invested_all_time > 0 ? (
+                <>
+                  <span
+                    className={`mono ${stats.actual_return_pct >= 0 ? 'profit' : 'loss'}`}
+                    style={{ fontWeight: 700 }}
+                  >
+                    {stats.actual_return_pct > 0 ? '+' : ''}
+                    {formatNumber(stats.actual_return_pct)}%
+                  </span>
+                  {' '}จากเงินลงทุนทั้งหมด (all-time)
+                </>
+              ) : (
+                'กำไรขายจริง + เงินปันผลสุทธิรับจริง'
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Note */}
@@ -431,12 +477,22 @@ export default function StockDetailPage({ params }: PageProps) {
 
         <BuyRoundTable
           rounds={rounds}
+          sells={sells}
           onAdd={handleAddRound}
           onEdit={handleEditRound}
           onDelete={handleDeleteRound}
           avgCost={stats.avg_cost}
           totalShares={stats.total_shares}
           totalInvested={stats.total_invested}
+          currentPrice={Number(raw.current_price ?? 0)}
+          currentValue={stats.current_value}
+          unrealizedProfit={stats.unrealized_profit}
+          unrealizedProfitPct={stats.unrealized_profit_pct}
+        />
+
+        <DividendAccumulationChart
+          dividends={dividends}
+          symbol={raw.symbol}
         />
 
         <DividendTable
@@ -452,7 +508,10 @@ export default function StockDetailPage({ params }: PageProps) {
           <div style={{ marginTop: '40px' }}>
             <div className="section-title">ประวัติการขาย (Trading History)</div>
             <div className="animate-stagger" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {sells.map((s) => (
+              {sells.map((s) => {
+                const costBasis = Number(s.avg_cost_at_sell) * Number(s.shares);
+                const profitPct = costBasis > 0 ? (Number(s.profit) / costBasis) * 100 : 0;
+                return (
                 <div key={s.id} className="stock-row history-grid-layout" style={{ borderLeft: '3px solid var(--amber)', cursor: 'default' }}>
                   <div>
                     <div className="internal-label">Sell Date</div>
@@ -465,18 +524,28 @@ export default function StockDetailPage({ params }: PageProps) {
                   <div>
                     <div className="internal-label">Sell Price</div>
                     <div className="mono" style={{ fontSize: '13px' }}>{formatCurrency(s.sell_price)}</div>
+                    <div className="mono" style={{ marginTop: '3px', color: 'var(--text-muted)', fontSize: '11px' }}>
+                      Fee: {formatCurrency(Number(s.sell_fee ?? 0))}
+                    </div>
                   </div>
                   <div className="history-last-col">
-                    <div className="internal-label">Profit</div>
+                    <div className="internal-label">Net Profit</div>
                     <div className={`mono ${s.profit >= 0 ? 'profit' : 'loss'}`} style={{ fontWeight: 700, fontSize: '15px' }}>
                       {formatCurrency(s.profit)}
                     </div>
+                    <div className={`mono ${profitPct >= 0 ? 'profit' : 'loss'}`} style={{ marginTop: '3px', fontWeight: 700, fontSize: '12px' }}>
+                      {profitPct > 0 ? '+' : ''}{formatNumber(profitPct)}%
+                    </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <button className="btn btn-ghost" onClick={() => handleDeleteSell(s.id)}>✕</button>
+                    <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                      <button className="btn btn-ghost" onClick={() => setEditingSell(s)} aria-label="แก้ไขรายการขาย">✎</button>
+                      <button className="btn btn-ghost" onClick={() => handleDeleteSell(s.id)} aria-label="ลบรายการขาย">✕</button>
+                    </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
             <div style={{ marginTop: '16px', padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: '13px', fontWeight: 600 }}>รวมกำไรที่ทำได้จริงทั้งหมด:</span>
@@ -487,6 +556,35 @@ export default function StockDetailPage({ params }: PageProps) {
           </div>
         )}
       </div>
+      {/* Keep the modal outside the animated page container so position: fixed
+          remains anchored to the viewport instead of the full document. */}
+      {isEditing && (
+        <div className="modal-overlay">
+          <div className="modal" style={{ maxWidth: '600px' }}>
+            <div className="modal-header">
+              <div className="modal-title mono">EDIT STOCK: {raw.symbol}</div>
+              <button className="btn btn-ghost" onClick={() => setIsEditing(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <StockForm
+                initialData={{ ...raw, status: stats.status }}
+                onSubmit={handleUpdateStock}
+                onCancel={() => setIsEditing(false)}
+                loading={updating}
+                submitLabel="บันทึกการแก้ไข"
+                existingPortTypes={existingOptions?.ports}
+                existingStatuses={existingOptions?.statuses}
+                existingAssetTypes={existingOptions?.assetTypes}
+                lockPortType={(
+                  (raw.buy_rounds?.length ?? 0)
+                  + (raw.realized_trades?.length ?? 0)
+                  + (raw.dividend_payments?.length ?? 0)
+                ) > 0}
+              />
+            </div>
+          </div>
+        </div>
+      )}
       <ToastContainer />
     </>
   );

@@ -2,19 +2,13 @@
 
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getSupabase } from '@/lib/supabase';
 import { ToastContainer, useToast } from '@/components/Toast';
-import type { InfoResource } from '@/lib/types';
-
-async function fetchInfo() {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('informations')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return data as InfoResource[];
-}
+import {
+  fetchInformations,
+  addInformation,
+  updateInformation,
+  deleteInformation,
+} from '@/lib/services/infoService';
 
 export default function InfoPage() {
   const queryClient = useQueryClient();
@@ -29,7 +23,7 @@ export default function InfoPage() {
 
   const { data: infoList, isLoading } = useQuery({
     queryKey: ['informations'],
-    queryFn: fetchInfo,
+    queryFn: fetchInformations,
   });
 
   const filteredInfo = infoList?.filter(info => 
@@ -40,16 +34,13 @@ export default function InfoPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    const supabase = getSupabase();
     
     try {
       if (editingId) {
-        const { error } = await supabase.from('informations').update(formData).eq('id', editingId);
-        if (error) throw error;
+        await updateInformation(editingId, formData);
         toast.show('อัปเดตข้อมูลสำเร็จ', 'success');
       } else {
-        const { error } = await supabase.from('informations').insert([formData]);
-        if (error) throw error;
+        await addInformation(formData);
         toast.show('เพิ่มข้อมูลใหม่สำเร็จ', 'success');
       }
       setIsAdding(false);
@@ -57,7 +48,7 @@ export default function InfoPage() {
       setFormData({ title: '', link: '', detail: '' });
       queryClient.invalidateQueries({ queryKey: ['informations'] });
     } catch (err: any) {
-      toast.show(err.message, 'error');
+      toast.show(err.message || 'บันทึกไม่สำเร็จ', 'error');
     } finally {
       setSaving(false);
     }
@@ -65,12 +56,12 @@ export default function InfoPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('ยืนยันลบข้อมูลนี้?')) return;
-    const supabase = getSupabase();
-    const { error } = await supabase.from('informations').delete().eq('id', id);
-    if (error) toast.show(error.message, 'error');
-    else {
+    try {
+      await deleteInformation(id);
       toast.show('ลบข้อมูลแล้ว', 'success');
       queryClient.invalidateQueries({ queryKey: ['informations'] });
+    } catch (err: any) {
+      toast.show(err.message || 'ลบไม่สำเร็จ', 'error');
     }
   };
 
@@ -133,9 +124,11 @@ export default function InfoPage() {
           </div>
         )}
 
-        {isAdding && (
+      </div>
+
+      {isAdding && (
           <div className="modal-overlay">
-            <div className="modal">
+            <div className="modal info-modal">
               <div className="modal-header">
                 <div className="modal-title mono">{editingId ? 'EDIT INFO' : 'ADD NEW INFO'}</div>
                 <button className="btn btn-ghost" onClick={() => { setIsAdding(false); setEditingId(null); }}>✕</button>
@@ -182,7 +175,6 @@ export default function InfoPage() {
             </div>
           </div>
         )}
-      </div>
       <ToastContainer />
     </>
   );

@@ -1,7 +1,11 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { getSupabase } from '@/lib/supabase';
+import {
+  createStock,
+  fetchStockOptions,
+  findDuplicateStock,
+} from '@/lib/services/portfolioService';
 import { StockForm } from '@/components/StockForm';
 import type { StockFormData } from '@/components/StockForm';
 import Link from 'next/link';
@@ -18,13 +22,10 @@ export default function NewStockPage() {
   useEffect(() => {
     const fetchOptions = async () => {
       try {
-        const supabase = getSupabase();
-        const { data } = await supabase.from('stocks').select('port_type, status, asset_type');
-        if (data) {
-          setExistingPorts(Array.from(new Set(data.map((s: any) => s.port_type).filter(Boolean))));
-          setExistingStatuses(Array.from(new Set(data.map((s: any) => s.status).filter(Boolean))));
-          setExistingAssetTypes(Array.from(new Set(data.map((s: any) => s.asset_type).filter(Boolean))));
-        }
+        const options = await fetchStockOptions();
+        setExistingPorts(options.ports);
+        setExistingStatuses(options.statuses);
+        setExistingAssetTypes(options.assetTypes);
       } catch (e) {
         console.error(e);
       }
@@ -36,24 +37,27 @@ export default function NewStockPage() {
     setSaving(true);
     setError(null);
     try {
-      const supabase = getSupabase();
-      const { data: inserted, error: err } = await supabase
-        .from('stocks')
-        .insert({
-          symbol: data.symbol.toUpperCase(),
+      const normalizedSymbol = data.symbol.trim().toUpperCase();
+      const normalizedPort = data.port_type.trim();
+      const duplicate = await findDuplicateStock(normalizedSymbol, normalizedPort);
+      if (duplicate) {
+        throw new Error(`มีหุ้น ${normalizedSymbol} อยู่ใน Port ${normalizedPort} แล้ว`);
+      }
+
+      const inserted = await createStock({
+          symbol: normalizedSymbol,
           name: data.name || null,
           sector: data.sector || null,
-          status: data.status,
+          status: 'Sold Off',
           asset_type: data.asset_type,
-          port_type: data.port_type,
+          port_type: normalizedPort,
           dividend_per_share: data.dividend_per_share,
+          current_price: data.current_price,
           target_price: data.target_price,
+          graph_url: data.graph_url?.trim() || null,
+          link_url: data.link_url?.trim() || null,
           note: data.note || null,
-        })
-        .select()
-        .single();
-
-      if (err) throw err;
+        });
       router.push(`/stocks/${inserted.id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'บันทึกไม่สำเร็จ');

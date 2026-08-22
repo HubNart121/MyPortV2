@@ -3,17 +3,19 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { logout } from '@/lib/auth';
-import { logoutAction } from '@/lib/actions/auth';
-import { useRouter } from 'next/navigation';
+import { isOfflineMode } from '@/lib/app-mode';
 
 const navItems = [
 // ... (rest of the preamble)
   { href: '/', label: 'Dashboard', icon: '◈' },
+  { href: '/portfolio', label: 'Portfolio', icon: '▦' },
   { href: '/stocks/new', label: 'Add Stock', icon: '+' },
   { href: '/history', label: 'Trading History', icon: '▤' },
+  { href: '/transactions', label: 'ฝากเงิน / ถอนเงิน', icon: '⇄' },
   { href: '/files', label: 'จัดการไฟล์ (Files)', icon: '📂' },
   { href: '/info', label: 'คลังความรู้ (Inf.)', icon: 'ℹ' },
   { href: '/backup', label: 'Backup / Restore', icon: '⊡' },
+  { href: '/activity', label: 'Activity Log', icon: '▦' },
 ];
 
 import { useState, useEffect } from 'react';
@@ -42,8 +44,19 @@ export interface SidebarProps {
   onClose?: () => void;
 }
 
+import { useFirebaseAuth } from './AuthProvider';
+import { loginWithGoogle, logoutFirebase } from '@/lib/services/authService';
+
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const { user, isFirebaseActive } = useFirebaseAuth();
+  const closeOnMobile = () => {
+    if (typeof window !== 'undefined' && window.innerWidth <= 768) onClose?.();
+  };
+  const handleSecureLogout = async () => {
+    await logoutFirebase();
+    closeOnMobile();
+  };
 
   return (
     <>
@@ -76,11 +89,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 key={item.href}
                 href={item.href}
                 className={`nav-item ${isActive ? 'active' : ''}`}
-                onClick={() => {
-                  if (typeof window !== 'undefined' && window.innerWidth <= 768 && onClose) {
-                    onClose();
-                  }
-                }}
+                onClick={closeOnMobile}
               >
                 <span className="mono" style={{ fontSize: '12px', width: '14px', textAlign: 'center' }}>
                   {item.icon}
@@ -91,53 +100,91 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           })}
         </div>
 
+        {/* Firebase Account Panel */}
+        {isFirebaseActive && (
+          <div className="nav-section" style={{ background: 'var(--bg-surface)', padding: '10px 12px', borderRadius: '4px', margin: '10px 12px 0 12px', border: '1px solid var(--border)' }}>
+            <div className="nav-section-label" style={{ marginBottom: '6px', color: 'var(--amber)' }}>☁ Firebase Account</div>
+            {user ? (
+              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {user.displayName || user.email}
+              </div>
+            ) : (
+              <button
+                onClick={async () => {
+                  try {
+                    await loginWithGoogle();
+                  } catch (e: any) {
+                    alert(e.message);
+                  }
+                }}
+                className="btn btn-secondary btn-xs"
+                style={{ width: '100%', fontSize: '11px', padding: '4px 6px' }}
+              >
+                🔑 Google Sign-In
+              </button>
+            )}
+          </div>
+        )}
+
+        {isOfflineMode && (
+          <div className="nav-section" style={{ background: 'var(--bg-surface)', padding: '10px 12px', borderRadius: '4px', margin: '10px 12px 0 12px', border: '1px solid var(--border)' }}>
+            <div className="nav-section-label" style={{ marginBottom: '6px', color: 'var(--green)' }}>● Offline Mode</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-primary)' }}>Local PostgreSQL</div>
+            <div style={{ marginTop: '4px', fontSize: '10px', color: 'var(--text-muted)' }}>ไม่ใช้ Google Login หรือ Firebase</div>
+          </div>
+        )}
+
         <div className="nav-section" style={{ marginTop: 'auto' }}>
           <div className="nav-section-label">System</div>
-          <Link 
-            href="/settings" 
-            className={`nav-item ${pathname === '/settings' ? 'active' : ''}`}
-            onClick={() => {
-              if (typeof window !== 'undefined' && window.innerWidth <= 768 && onClose) {
-                onClose();
-              }
-            }}
-          >
-            <span className="mono" style={{ fontSize: '12px', width: '14px', textAlign: 'center' }}>⚙</span>
-            Change User/Pass
-          </Link>
-          <Link 
-            href="/settings/logs" 
-            className={`nav-item ${pathname === '/settings/logs' ? 'active' : ''}`}
-            onClick={() => {
-              if (typeof window !== 'undefined' && window.innerWidth <= 768 && onClose) {
-                onClose();
-              }
-            }}
-          >
-            <span className="mono" style={{ fontSize: '12px', width: '14px', textAlign: 'center' }}>▤</span>
-            Access Logs
-          </Link>
-          <button 
-            onClick={() => {
-              if (confirm('ต้องการออกจากระบบใช่หรือไม่?')) {
-                logout();
-                if (typeof window !== 'undefined' && window.innerWidth <= 768 && onClose) {
-                  onClose();
-                }
-              }
-            }}
-            className="nav-item"
-            style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)' }}
-          >
-            <span className="mono" style={{ fontSize: '12px', width: '14px', textAlign: 'center' }}>⎋</span>
-            Logout
-          </button>
+          {!isFirebaseActive && !isOfflineMode && (
+            <>
+              <Link
+                href="/settings"
+                className={`nav-item ${pathname === '/settings' ? 'active' : ''}`}
+                onClick={closeOnMobile}
+              >
+                <span className="mono" style={{ fontSize: '12px', width: '14px', textAlign: 'center' }}>⚙</span>
+                Change User/Pass
+              </Link>
+              <Link
+                href="/settings/logs"
+                className={`nav-item ${pathname === '/settings/logs' ? 'active' : ''}`}
+                onClick={closeOnMobile}
+              >
+                <span className="mono" style={{ fontSize: '12px', width: '14px', textAlign: 'center' }}>▤</span>
+                Access Logs
+              </Link>
+              <button
+                onClick={() => {
+                  if (confirm('ต้องการออกจากระบบใช่หรือไม่?')) {
+                    logout();
+                    closeOnMobile();
+                  }
+                }}
+                className="nav-item"
+                style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)' }}
+              >
+                <span className="mono" style={{ fontSize: '12px', width: '14px', textAlign: 'center' }}>⎋</span>
+                Logout
+              </button>
+            </>
+          )}
+          {isFirebaseActive && user && (
+            <button
+              onClick={handleSecureLogout}
+              className="nav-item"
+              style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)' }}
+            >
+              <span className="mono" style={{ fontSize: '12px', width: '14px', textAlign: 'center' }}>⎋</span>
+              Logout
+            </button>
+          )}
         </div>
 
         <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.8 }}>
-            <div>PORT_TRACK v1.1</div>
-            <div>Powered by Supabase</div>
+            <div>PORT_TRACK v2.0</div>
+            <div>Database: {isFirebaseActive ? 'Firebase' : 'Local PostgreSQL'}</div>
           </div>
         </div>
       </nav>

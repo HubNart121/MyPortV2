@@ -4,36 +4,48 @@ import { useState } from 'react';
 import { STOCK_STATUS, ASSET_TYPE, PORT_TYPE } from '@/lib/types';
 import type { StockStatus, AssetType, PortType } from '@/lib/types';
 
+export type RealizedOutcomeFilter = 'All' | 'Profit' | 'Loss';
+
 interface FilterBarProps {
   onStatusChange: (status: StockStatus | 'All') => void;
+  onRealizedOutcomeChange: (outcome: RealizedOutcomeFilter) => void;
   onAssetTypeChange: (type: AssetType | 'All') => void;
   onPortChange: (port: PortType | 'All') => void;
+  onYearChange: (year: string) => void;
   onSortChange: (sort: string) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
   activeStatus: StockStatus | 'All';
+  activeRealizedOutcome: RealizedOutcomeFilter;
   activeType: AssetType | 'All';
   activePort: PortType | 'All';
+  activeYear: string;
   activeSort: string;
   totalCount: number;
   filteredCount: number;
   availablePorts?: string[];
+  availableYears: string[];
 }
 
 export function FilterBar({
   onStatusChange,
+  onRealizedOutcomeChange,
   onAssetTypeChange,
   onPortChange,
+  onYearChange,
   onSortChange,
   activeStatus,
+  activeRealizedOutcome,
   activeType,
   activePort,
+  activeYear,
   activeSort,
   searchQuery,
   onSearchChange,
   totalCount,
   filteredCount,
   availablePorts,
+  availableYears,
 }: FilterBarProps) {
   return (
     <div style={{ marginBottom: '24px' }}>
@@ -87,6 +99,34 @@ export function FilterBar({
         </div>
       </div>
 
+      {activeStatus === 'Sold Off' && (
+        <div style={{ marginBottom: '10px', paddingLeft: '12px', borderLeft: '2px solid var(--amber)' }}>
+          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '6px' }}>
+            Filter Sold Off by Result
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <button
+              className={`filter-chip ${activeRealizedOutcome === 'All' ? 'active' : ''}`}
+              onClick={() => onRealizedOutcomeChange('All')}
+            >
+              ทั้งหมด
+            </button>
+            <button
+              className={`filter-chip realized-profit-filter ${activeRealizedOutcome === 'Profit' ? 'active' : ''}`}
+              onClick={() => onRealizedOutcomeChange('Profit')}
+            >
+              กำไร
+            </button>
+            <button
+              className={`filter-chip realized-loss-filter ${activeRealizedOutcome === 'Loss' ? 'active' : ''}`}
+              onClick={() => onRealizedOutcomeChange('Loss')}
+            >
+              ขาดทุน
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Asset Type row */}
       <div style={{ marginBottom: '10px' }}>
         <div style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '6px' }}>
@@ -109,6 +149,37 @@ export function FilterBar({
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Year row */}
+      <div style={{ marginBottom: '10px' }}>
+        <div style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '6px' }}>
+          Filter by Year
+        </div>
+        <select
+          aria-label="Filter by Year"
+          value={activeYear}
+          onChange={(e) => onYearChange(e.target.value)}
+          style={{
+            background: 'var(--bg-primary)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border)',
+            padding: '8px 12px',
+            borderRadius: '2px',
+            fontFamily: 'Space Mono, monospace',
+            fontSize: '11px',
+            outline: 'none',
+            cursor: 'pointer',
+            minWidth: '210px',
+          }}
+        >
+          <option value="All">ทุกปี (All Years)</option>
+          {availableYears.map((year) => (
+            <option key={year} value={year}>
+              พ.ศ. {Number(year) + 543} / {year}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Sort By row */}
@@ -135,8 +206,12 @@ export function FilterBar({
             <option value="created_desc">Latest Added (Default)</option>
             <option value="symbol_asc">Symbol (A-Z)</option>
             <option value="invested_desc">Invested Amount (High-Low)</option>
-            <option value="profit_desc">Expected Profit (High-Low)</option>
-            <option value="profit_asc">Expected Profit (Low-High)</option>
+            <option value="profit_desc">
+              {activeStatus === 'Sold Off' ? 'Realized P/L (High-Low)' : 'Expected Profit (High-Low)'}
+            </option>
+            <option value="profit_asc">
+              {activeStatus === 'Sold Off' ? 'Realized P/L (Low-High)' : 'Expected Profit (Low-High)'}
+            </option>
             <option value="yield_desc">Div Yield (High-Low)</option>
           </select>
         </div>

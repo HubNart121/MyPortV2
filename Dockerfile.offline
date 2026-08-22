@@ -1,0 +1,45 @@
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+ARG NEXT_PUBLIC_SUPABASE_URL=http://localhost:3020
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlhdCI6MTc4NTY1MDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.bG5ibF9RT4jmuRej4-xy91mfKAv7Jz5mXWavyon2B5g
+ENV NEXT_PUBLIC_APP_MODE=offline \
+    APP_MODE=offline \
+    NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY} \
+    SUPABASE_SERVER_URL=http://api:8080 \
+    NEXT_TELEMETRY_DISABLED=1
+
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000 \
+    APP_MODE=offline \
+    NEXT_PUBLIC_APP_MODE=offline \
+    NEXT_PUBLIC_SUPABASE_URL=http://localhost:3020 \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlhdCI6MTc4NTY1MDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.bG5ibF9RT4jmuRej4-xy91mfKAv7Jz5mXWavyon2B5g \
+    SUPABASE_SERVER_URL=http://api:8080 \
+    APP_ORIGIN=http://localhost:3020 \
+    LOCAL_UPLOAD_DIR=/data/uploads
+
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 nextjs
+
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+EXPOSE 3000
+CMD ["node", "server.js"]

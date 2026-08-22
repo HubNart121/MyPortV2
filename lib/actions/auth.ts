@@ -34,14 +34,3 @@ export async function loginAction(user: string, pass: string) {
 
   return { success: false, error: 'Invalid credentials' };
 }
-
-export async function logoutAction() {
-  const cookieStore = await cookies();
-  cookieStore.delete(AUTH_COOKIE_NAME);
-  return { success: true };
-}
-
-export async function checkAuthAction() {
-  const cookieStore = await cookies();
-  return cookieStore.get(AUTH_COOKIE_NAME)?.value === 'authenticated';
-}

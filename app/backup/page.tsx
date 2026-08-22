@@ -1,17 +1,15 @@
 'use client';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { BackupRestore } from '@/components/BackupRestore';
-import { ToastContainer, useToast } from '@/components/Toast';
+import { BackupExport } from '@/components/BackupExport';
+import { JsonRestore } from '@/components/JsonRestore';
+import { PortfolioClearPanel } from '@/components/PortfolioClearPanel';
+import { ToastContainer } from '@/components/Toast';
+import { isOfflineMode } from '@/lib/app-mode';
 
 export default function BackupPage() {
   const queryClient = useQueryClient();
-  const toast = useToast();
-
-  const handleRestoreComplete = () => {
-    queryClient.invalidateQueries({ queryKey: ['portfolio'] });
-    toast.show('นำเข้าข้อมูลสำเร็จ!', 'success');
-  };
+  const refreshAppData = () => queryClient.invalidateQueries();
 
   return (
     <>
@@ -19,12 +17,18 @@ export default function BackupPage() {
         <div className="page-header">
           <div>
             <div className="page-title">BACKUP / RESTORE</div>
-            <div className="page-subtitle">สำรองข้อมูลและนำเข้าข้อมูลพอร์ตการลงทุน</div>
+            <div className="page-subtitle">
+              {isOfflineMode
+                ? 'สำรองและกู้คืนข้อมูลจาก Local PostgreSQL แบบ Offline'
+                : 'สำรองและกู้คืนข้อมูลสำหรับบัญชี Firebase ที่ได้รับอนุญาต'}
+            </div>
           </div>
         </div>
 
-        <div style={{ maxWidth: '640px' }}>
-          <BackupRestore onRestoreComplete={handleRestoreComplete} />
+        <div className="backup-page-stack">
+          <BackupExport />
+          <JsonRestore onRestoreComplete={refreshAppData} />
+          <PortfolioClearPanel onClearComplete={refreshAppData} />
         </div>
       </div>
       <ToastContainer />

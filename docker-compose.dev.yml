@@ -1,9 +1,7 @@
-version: '3.8'
-
 services:
   db:
     image: ghcr.io/infrastructure-as-code/postgres:15-alpine
-    container_name: clone-myport-db-dev
+    container_name: my-port-v2-db-dev
     environment:
       - POSTGRES_PASSWORD=postgres-root-password
       - POSTGRES_DB=postgres
@@ -11,8 +9,13 @@ services:
       - postgres_data_dev:/var/lib/postgresql/data
       - ./docker/db/01-init-roles.sql:/docker-entrypoint-initdb.d/01-init-roles.sql:ro
       - ./docker/db/02-schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+      - ./docker/db/03-auto-stock-status.sql:/docker-entrypoint-initdb.d/03-auto-stock-status.sql:ro
+      - ./docker/db/04-chronological-trade-recalculation.sql:/docker-entrypoint-initdb.d/04-chronological-trade-recalculation.sql:ro
+      - ./docker/db/05-multi-port-symbol.sql:/docker-entrypoint-initdb.d/05-multi-port-symbol.sql:ro
+      - ./docker/db/06-trading-fees.sql:/docker-entrypoint-initdb.d/06-trading-fees.sql:ro
+      - ./docker/db/07-backup-schema-parity.sql:/docker-entrypoint-initdb.d/07-backup-schema-parity.sql:ro
     ports:
-      - "5433:5432"
+      - "5434:5432"
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
@@ -22,7 +25,7 @@ services:
 
   api:
     image: ghcr.io/supabase/postgrest:v12.2.0
-    container_name: clone-myport-api-dev
+    container_name: my-port-v2-api-dev
     environment:
       - PGRST_DB_URI=postgres://authenticator:my-secret-authenticator-password@db:5432/postgres
       - PGRST_DB_SCHEMAS=public
@@ -36,9 +39,9 @@ services:
 
   gateway:
     image: nginx:alpine
-    container_name: clone-myport-gateway-dev
+    container_name: my-port-v2-gateway-dev
     ports:
-      - "3011:8080"
+      - "3021:8080"
     volumes:
       - ./docker/nginx/dev.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
@@ -47,25 +50,26 @@ services:
 
   db-ui:
     image: ghcr.io/djnotes/adminer:latest
-    container_name: clone-myport-db-ui-dev
+    container_name: my-port-v2-db-ui-dev
     ports:
-      - "8088:8080"
+      - "8089:8080"
     depends_on:
       - db
     restart: unless-stopped
 
   web:
     image: node:20-alpine
-    container_name: clone-myport-web-dev
+    container_name: my-port-v2-web-dev
     working_dir: /app
     ports:
-      - "3010:3000"
+      - "3020:3000"
     volumes:
       - .:/app
       - /app/node_modules
       - /app/.next
     env_file:
       - .env
+      - .env.local
     extra_hosts:
       - "localhost:host-gateway"
     command: sh -c "npm install && npm run dev"

@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import type { RealizedTrade, DividendPayment } from '@/lib/types';
 import { formatCurrency, formatThaiYear } from '@/lib/calculations';
+import { ThaiDateInput } from '@/components/ThaiDateInput';
 import {
   BarChart,
   Bar,
@@ -14,10 +15,11 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
+const CHART_INITIAL_DIMENSION = { width: 1, height: 1 };
+
 interface PerformanceAnalyticsProps {
   allTrades: (RealizedTrade & { symbol: string; port_type?: string })[];
   allDividends: (DividendPayment & { symbol: string; port_type?: string })[];
-  allBuys?: { buy_date: string; port_type?: string }[];
   selectedPort?: string;
   onPortChange?: (port: string) => void;
 }
@@ -35,7 +37,6 @@ const extractCEYear = (dateStr?: string): string => {
 export function PerformanceAnalytics({
   allTrades,
   allDividends,
-  allBuys = [],
   selectedPort: externalPort,
   onPortChange,
 }: PerformanceAnalyticsProps) {
@@ -56,11 +57,10 @@ export function PerformanceAnalytics({
     const ports = new Set<string>();
     allTrades.forEach((t) => t.port_type && ports.add(t.port_type));
     allDividends.forEach((d) => d.port_type && ports.add(d.port_type));
-    allBuys.forEach((b) => b.port_type && ports.add(b.port_type));
     ports.add('Private');
     ports.add('Business');
     return ['All', ...Array.from(ports).sort()];
-  }, [allTrades, allDividends, allBuys]);
+  }, [allTrades, allDividends]);
 
   // Filter trades, dividends, and buys by Port Type first
   const portFilteredTrades = useMemo(() => {
@@ -72,11 +72,6 @@ export function PerformanceAnalytics({
     if (selectedPort === 'All') return allDividends;
     return allDividends.filter((d) => (d.port_type || 'Private') === selectedPort);
   }, [allDividends, selectedPort]);
-
-  const portFilteredBuys = useMemo(() => {
-    if (selectedPort === 'All') return allBuys;
-    return allBuys.filter((b) => (b.port_type || 'Private') === selectedPort);
-  }, [allBuys, selectedPort]);
 
   // Compute active date boundaries
   const { startDate, endDate } = useMemo(() => {
@@ -145,7 +140,7 @@ export function PerformanceAnalytics({
       // Compute Return % for this trade
       const totalCost = t.avg_cost_at_sell && t.avg_cost_at_sell > 0
         ? t.shares * t.avg_cost_at_sell
-        : (t.sell_price * t.shares) - t.profit;
+        : (t.sell_price * t.shares) - (t.sell_fee ?? 0) - t.profit;
 
       const pct = totalCost > 0 ? (t.profit / totalCost) * 100 : 0;
 
@@ -170,29 +165,19 @@ export function PerformanceAnalytics({
   const yearlyData = useMemo(() => {
     const trades = preset === 'all' ? portFilteredTrades : filteredTrades;
     const dividends = preset === 'all' ? portFilteredDividends : filteredDividends;
-
     const map: Record<string, { year: string; realizedProfit: number; netDividend: number; total: number }> = {};
-
-    // Initialize years from buy history if present
-    if (preset === 'all' && portFilteredBuys.length > 0) {
-      portFilteredBuys.forEach((b) => {
-        const yr = extractCEYear(b.buy_date);
-        if (yr && yr !== 'Unknown' && !map[yr]) {
-          map[yr] = { year: yr, realizedProfit: 0, netDividend: 0, total: 0 };
-        }
-      });
-    }
+    const createYear = (year: string) => ({ year, realizedProfit: 0, netDividend: 0, total: 0 });
 
     trades.forEach((t) => {
       const yr = extractCEYear(t.sell_date);
-      if (!map[yr]) map[yr] = { year: yr, realizedProfit: 0, netDividend: 0, total: 0 };
+      if (!map[yr]) map[yr] = createYear(yr);
       map[yr].realizedProfit += t.profit;
       map[yr].total += t.profit;
     });
 
     dividends.forEach((d) => {
       const yr = extractCEYear(d.pay_date);
-      if (!map[yr]) map[yr] = { year: yr, realizedProfit: 0, netDividend: 0, total: 0 };
+      if (!map[yr]) map[yr] = createYear(yr);
       map[yr].netDividend += d.net_amount;
       map[yr].total += d.net_amount;
     });
@@ -200,12 +185,49 @@ export function PerformanceAnalytics({
     const list = Object.values(map);
     list.sort((a, b) => a.year.localeCompare(b.year));
     return list;
-  }, [portFilteredTrades, portFilteredDividends, portFilteredBuys, filteredTrades, filteredDividends, preset]);
+  }, [portFilteredTrades, portFilteredDividends, filteredTrades, filteredDividends, preset]);
 
   // Table sorted descending
   const yearlyTableData = useMemo(() => {
     return [...yearlyData].sort((a, b) => b.year.localeCompare(a.year));
   }, [yearlyData]);
+
+  const monthlyDividendData = useMemo(() => {
+    const dividends = preset === 'all' ? portFilteredDividends : filteredDividends;
+    const map: Record<string, { year: string; months: number[]; total: number }> = {};
+
+    dividends.forEach((dividend) => {
+      const year = extractCEYear(dividend.pay_date);
+      const monthIndex = Number(dividend.pay_date.slice(5, 7)) - 1;
+      if (year === 'Unknown' || monthIndex < 0 || monthIndex > 11) return;
+      if (!map[year]) map[year] = { year, months: Array(12).fill(0), total: 0 };
+      const netAmount = Number(dividend.net_amount);
+      map[year].months[monthIndex] += netAmount;
+      map[year].total += netAmount;
+    });
+
+    return Object.values(map)
+      .map((row) => {
+        const annualTotalCents = Math.round(row.total * 100);
+        const monthCents = row.months.map((amount) => Math.round(amount * 100));
+        const displayedMonthTotalCents = monthCents.reduce((sum, amount) => sum + amount, 0);
+        const roundingDifferenceCents = annualTotalCents - displayedMonthTotalCents;
+        const lastPaidMonth = monthCents.findLastIndex((amount) => amount !== 0);
+
+        if (roundingDifferenceCents !== 0 && lastPaidMonth >= 0) {
+          monthCents[lastPaidMonth] += roundingDifferenceCents;
+        }
+
+        return {
+          year: row.year,
+          months: monthCents.map((amount) => amount / 100),
+          total: annualTotalCents / 100,
+        };
+      })
+      .sort((a, b) => b.year.localeCompare(a.year));
+  }, [filteredDividends, portFilteredDividends, preset]);
+
+  const monthLabels = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -257,12 +279,12 @@ export function PerformanceAnalytics({
     return null;
   };
 
-  const hasAnalyticsData = allTrades.length > 0 || allDividends.length > 0 || allBuys.length > 0;
+  const hasAnalyticsData = allTrades.length > 0 || allDividends.length > 0;
 
   if (!hasAnalyticsData) return null;
 
   return (
-    <div style={{ marginBottom: '32px' }}>
+    <div className="performance-analytics" style={{ marginBottom: '32px' }}>
       {/* Section Header */}
       <div className="panel" style={{ marginBottom: '16px' }}>
         <div
@@ -270,7 +292,7 @@ export function PerformanceAnalytics({
           style={{
             display: 'flex',
             flexWrap: 'wrap',
-            justify: 'space-between',
+            justifyContent: 'space-between',
             alignItems: 'center',
             gap: '12px',
           }}
@@ -338,37 +360,18 @@ export function PerformanceAnalytics({
 
         {/* Custom Range Inputs */}
         {preset === 'custom' && (
-          <div
-            style={{
-              padding: '12px 20px',
-              borderTop: '1px solid var(--border)',
-              background: 'var(--bg-primary)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              flexWrap: 'wrap',
-              fontSize: '12px',
-            }}
-          >
-            <span>ตั้งแต่วันที่:</span>
-            <input
-              type="date"
-              className="form-input mono"
-              style={{ width: '150px' }}
-              value={customStart}
-              onChange={(e) => setCustomStart(e.target.value)}
-            />
-            <span>ถึงวันที่:</span>
-            <input
-              type="date"
-              className="form-input mono"
-              style={{ width: '150px' }}
-              value={customEnd}
-              onChange={(e) => setCustomEnd(e.target.value)}
-            />
+          <div className="performance-custom-range">
+            <div className="performance-date-field">
+              <span>ตั้งแต่วันที่ (พ.ศ.)</span>
+              <ThaiDateInput value={customStart} onChange={setCustomStart} />
+            </div>
+            <div className="performance-date-field">
+              <span>ถึงวันที่ (พ.ศ.)</span>
+              <ThaiDateInput value={customEnd} onChange={setCustomEnd} />
+            </div>
             {(customStart || customEnd) && (
               <button
-                className="btn btn-ghost btn-sm"
+                className="btn btn-ghost btn-sm performance-date-clear"
                 onClick={() => {
                   setCustomStart('');
                   setCustomEnd('');
@@ -443,14 +446,19 @@ export function PerformanceAnalytics({
 
       {/* Yearly Breakdown Chart & Table Grid */}
       {yearlyData.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px', minWidth: 0 }}>
+        <div className="yearly-performance-grid">
           {/* Yearly Bar Chart */}
-          <div className="panel" style={{ minWidth: 0 }}>
+          <div className="panel yearly-chart-panel">
             <div className="panel-header">
               <div className="panel-title">เปรียบเทียบผลตอบแทนจริงรายปี (Yearly Performance)</div>
             </div>
-            <div style={{ height: '320px', width: '100%', minWidth: 0, padding: '20px 10px 10px' }}>
-              <ResponsiveContainer width="99%" height="100%">
+            <div className="yearly-chart">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                minWidth={0}
+                initialDimension={CHART_INITIAL_DIMENSION}
+              >
                 <BarChart data={yearlyData} margin={{ top: 20, right: 20, left: 10, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                   <XAxis
@@ -486,12 +494,12 @@ export function PerformanceAnalytics({
           </div>
 
           {/* Yearly Summary Table */}
-          <div className="panel">
+          <div className="panel yearly-table-panel">
             <div className="panel-header">
               <div className="panel-title">ตารางสรุปผลตอบแทนรายปี (พ.ศ.)</div>
             </div>
-            <div style={{ padding: '0', overflowX: 'auto' }}>
-              <table className="data-table">
+            <div className="yearly-table-scroll">
+              <table className="data-table yearly-summary-table">
                 <thead>
                   <tr>
                     <th>ปี (พ.ศ.)</th>
@@ -536,6 +544,84 @@ export function PerformanceAnalytics({
                 </tfoot>
               </table>
             </div>
+
+            <div className="yearly-mobile-cards">
+              {yearlyTableData.map((row) => (
+                <div className="yearly-mobile-card" key={row.year}>
+                  <div className="yearly-mobile-year mono">ปี พ.ศ. {formatThaiYear(row.year)}</div>
+                  <div className="yearly-mobile-metrics">
+                    <div>
+                      <span>กำไรจากการขาย</span>
+                      <strong
+                        className="mono"
+                        style={{ color: row.realizedProfit > 0 ? 'var(--green)' : row.realizedProfit < 0 ? 'var(--red)' : 'var(--text-muted)' }}
+                      >
+                        {row.realizedProfit === 0 ? '—' : formatCurrency(row.realizedProfit)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>เงินปันผลสุทธิ</span>
+                      <strong className="mono" style={{ color: 'var(--green)' }}>
+                        {row.netDividend === 0 ? '—' : formatCurrency(row.netDividend)}
+                      </strong>
+                    </div>
+                    <div className="yearly-mobile-total">
+                      <span>ผลตอบแทนรวม</span>
+                      <strong className="mono" style={{ color: row.total >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                        {formatCurrency(row.total)}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              <div className="yearly-mobile-grand-total">
+                <span>{preset === 'all' ? 'รวมประวัติทั้งหมด' : 'รวมในช่วงที่เลือก'}</span>
+                <strong className="mono" style={{ color: periodTotalReturn >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                  {formatCurrency(periodTotalReturn)}
+                </strong>
+                <small className="mono">
+                  ขาย {formatCurrency(periodRealizedProfit)} · ปันผล {formatCurrency(periodNetDividend)}
+                </small>
+              </div>
+            </div>
+
+            {monthlyDividendData.length > 0 && (
+              <div className="monthly-dividend-section">
+                <div className="panel-header monthly-dividend-header">
+                  <div>
+                    <div className="panel-title">ตารางเงินปันผลสุทธิรายเดือน (พ.ศ.)</div>
+                    <div className="monthly-dividend-subtitle">ยอดรับจริงหลังหักภาษี · {selectedPort === 'All' ? 'ทุกพอร์ต' : selectedPort}</div>
+                  </div>
+                </div>
+                <div className="monthly-dividend-scroll">
+                  <table className="data-table monthly-dividend-table">
+                    <thead>
+                      <tr>
+                        <th>ปี (พ.ศ.)</th>
+                        {monthLabels.map((month) => (
+                          <th key={month} style={{ textAlign: 'right' }}>{month}</th>
+                        ))}
+                        <th style={{ textAlign: 'right' }}>รวมทั้งปี</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {monthlyDividendData.map((row) => (
+                        <tr key={row.year}>
+                          <td className="mono monthly-dividend-year">{formatThaiYear(row.year)}</td>
+                          {row.months.map((amount, monthIndex) => (
+                            <td key={`${row.year}-${monthIndex}`} className="mono monthly-dividend-value">
+                              {amount === 0 ? '—' : formatCurrency(amount)}
+                            </td>
+                          ))}
+                          <td className="mono monthly-dividend-total">{formatCurrency(row.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

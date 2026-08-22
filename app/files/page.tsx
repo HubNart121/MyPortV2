@@ -1,20 +1,18 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getSupabase } from '@/lib/supabase';
 import { ToastContainer, useToast } from '@/components/Toast';
-import type { FileResource } from '@/lib/types';
-
-async function fetchFiles() {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('files')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return data as FileResource[];
-}
+import {
+  fetchFiles,
+  addFileRecord,
+  updateFileRecord,
+  deleteFileRecord,
+  uploadBinaryFile,
+  type FileRecordInput,
+} from '@/lib/services/fileService';
+import { isOfflineMode } from '@/lib/app-mode';
 
 export default function FilesPage() {
   const queryClient = useQueryClient();
@@ -22,10 +20,12 @@ export default function FilesPage() {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
   // Form State
-  const [formData, setFormData] = useState({ name: '', detail: '', link: '' });
+  const emptyForm: FileRecordInput = { name: '', detail: '', link: '', storage_kind: 'link' };
+  const [formData, setFormData] = useState<FileRecordInput>(emptyForm);
 
   const { data: files, isLoading } = useQuery({
     queryKey: ['files'],
@@ -37,27 +37,45 @@ export default function FilesPage() {
     (f.detail && f.detail.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
+
+    setUploadingFile(true);
+    try {
+      const uploaded = await uploadBinaryFile(selectedFile);
+      setFormData((prev) => ({
+        ...prev,
+        name: prev.name || selectedFile.name,
+        ...uploaded,
+        link: uploaded.link || '',
+      }));
+      toast.show(isOfflineMode ? 'บันทึกไฟล์ลง Local Volume แล้ว' : 'อัปโหลดไฟล์ขึ้น Firebase Storage สำเร็จ!', 'success');
+    } catch (err: any) {
+      toast.show(err.message || 'อัปโหลดไฟล์ไม่สำเร็จ (สามารถใส่ URL เองได้)', 'error');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    const supabase = getSupabase();
     
     try {
       if (editingId) {
-        const { error } = await supabase.from('files').update(formData).eq('id', editingId);
-        if (error) throw error;
-        toast.show('อัปโหลดไฟล์/ข้อมูลสำเร็จ', 'success');
+        await updateFileRecord(editingId, formData);
+        toast.show('อัปเดตไฟล์ข้อมูลสำเร็จ', 'success');
       } else {
-        const { error } = await supabase.from('files').insert([formData]);
-        if (error) throw error;
+        await addFileRecord(formData);
         toast.show('เพิ่มไฟล์สำเร็จ', 'success');
       }
       setIsAdding(false);
       setEditingId(null);
-      setFormData({ name: '', detail: '', link: '' });
+      setFormData(emptyForm);
       queryClient.invalidateQueries({ queryKey: ['files'] });
     } catch (err: any) {
-      toast.show(err.message, 'error');
+      toast.show(err.message || 'บันทึกไม่สำเร็จ', 'error');
     } finally {
       setSaving(false);
     }
@@ -65,12 +83,12 @@ export default function FilesPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('ยืนยันลบไฟล์นี้?')) return;
-    const supabase = getSupabase();
-    const { error } = await supabase.from('files').delete().eq('id', id);
-    if (error) toast.show(error.message, 'error');
-    else {
+    try {
+      await deleteFileRecord(id);
       toast.show('ลบไฟล์แล้ว', 'success');
       queryClient.invalidateQueries({ queryKey: ['files'] });
+    } catch (err: any) {
+      toast.show(err.message || 'ลบไม่สำเร็จ', 'error');
     }
   };
 
@@ -107,7 +125,16 @@ export default function FilesPage() {
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button className="btn btn-ghost btn-sm" onClick={() => {
                        setEditingId(f.id);
-                       setFormData({ name: f.name, detail: f.detail || '', link: f.link || '' });
+                       setFormData({
+                         name: f.name,
+                         detail: f.detail || '',
+                         link: f.link || '',
+                         storage_kind: f.storage_kind || 'link',
+                         stored_name: f.stored_name || null,
+                         original_name: f.original_name || null,
+                         mime_type: f.mime_type || null,
+                         size_bytes: f.size_bytes ?? null,
+                       });
                        setIsAdding(true);
                     }}>✎</button>
                     <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => handleDelete(f.id)}>✕</button>
@@ -132,9 +159,11 @@ export default function FilesPage() {
           </div>
         )}
 
-        {isAdding && (
+      </div>
+
+      {isAdding && createPortal(
           <div className="modal-overlay">
-            <div className="modal">
+            <div className="modal file-modal">
               <div className="modal-header">
                 <div className="modal-title mono">{editingId ? 'EDIT FILE' : 'ADD NEW FILE'}</div>
                 <button className="btn btn-ghost" onClick={() => { setIsAdding(false); setEditingId(null); }}>✕</button>
@@ -160,8 +189,20 @@ export default function FilesPage() {
                       onChange={e => setFormData({ ...formData, detail: e.target.value })}
                     />
                   </div>
+                  <div className="form-group" style={{ padding: '12px', background: 'var(--bg-surface)', border: '1px dashed var(--border-bright)', borderRadius: '4px' }}>
+                    <label className="form-label" style={{ color: 'var(--amber)' }}>
+                      {isOfflineMode ? '▣ เก็บไฟล์ใน Local Docker Volume (สูงสุด 20 MB)' : '☁ อัปโหลดไฟล์ตรงเข้า Firebase Storage'}
+                    </label>
+                    <input 
+                      type="file" 
+                      className="form-input" 
+                      onChange={handleFileUpload}
+                      disabled={uploadingFile}
+                    />
+                    {uploadingFile && <div style={{ fontSize: '11px', color: 'var(--amber)', marginTop: '4px' }}>⏳ กำลังบันทึกไฟล์...</div>}
+                  </div>
                   <div className="form-group">
-                    <label className="form-label">ลิงก์/URL (Link)</label>
+                    <label className="form-label">{isOfflineMode ? 'ลิงก์ภายนอก (ไม่บังคับ)' : 'ลิงก์/URL (Link)'}</label>
                     <input 
                       type="url" 
                       className="form-input mono" 
@@ -179,9 +220,9 @@ export default function FilesPage() {
                 </div>
               </form>
             </div>
-          </div>
-        )}
-      </div>
+          </div>,
+          document.body
+      )}
       <ToastContainer />
     </>
   );

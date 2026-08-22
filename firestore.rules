@@ -1,0 +1,25 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthorizedAppUser() {
+      return request.auth != null
+             && request.auth.token.email_verified == true
+             && request.auth.token.firebase.sign_in_provider == 'google.com'
+             && request.auth.token.email in [
+               'sl@brt.co.th',
+               'asiametalnart@gmail.com',
+               'iphonenart@gmail.com'
+             ];
+    }
+
+    match /users/{userId}/{document=**} {
+      allow read, write: if isAuthorizedAppUser()
+                         && request.auth.uid == userId;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

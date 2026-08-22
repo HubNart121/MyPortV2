@@ -7,6 +7,7 @@ interface BadgeProps {
 
 const statusClass: Record<StockStatus, string> = {
   Hold: 'badge-hold',
+  'Sold Off': 'badge-sold-off',
   'Plan-buy': 'badge-plan-buy',
   'Plan-sell': 'badge-plan-sell',
   Choice: 'badge-choice',

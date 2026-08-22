@@ -44,8 +44,6 @@ export function DividendTable({
   const [editSharesHeld, setEditSharesHeld] = useState<number>(0);
   const [editTaxPct, setEditTaxPct] = useState<number>(10);
 
-  const totalNet = dividends.reduce((acc, d) => acc + d.net_amount, 0);
-
   const resetAddForm = () => {
     setPayDate(new Date().toISOString().slice(0, 10));
     setDivPerShare('');
@@ -445,30 +443,6 @@ export function DividendTable({
         )}
       </div>
 
-      {/* Summary Footer */}
-      {dividends.length > 0 && (
-        <div
-          style={{
-            marginTop: '16px',
-            padding: '16px',
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border)',
-            borderRadius: '2px',
-            display: 'flex',
-            justify: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '12px',
-          }}
-        >
-          <span style={{ fontSize: '13px', fontWeight: 600 }}>
-            รวมเงินปันผลที่ได้รับจริงทั้งหมด (หลังหักภาษี):
-          </span>
-          <span className="mono green" style={{ fontSize: '18px', fontWeight: 700 }}>
-            {formatCurrency(totalNet)}
-          </span>
-        </div>
-      )}
     </div>
   );
 }
