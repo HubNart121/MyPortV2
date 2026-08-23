@@ -1,0 +1,2 @@
+ALTER TABLE stocks
+ADD COLUMN IF NOT EXISTS risk_category TEXT;

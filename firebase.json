@@ -1,0 +1,23 @@
+{
+  "apphosting": [
+    {
+      "backendId": "my-port-v2",
+      "rootDir": ".",
+      "ignore": [
+        "node_modules",
+        ".next",
+        ".git",
+        ".env",
+        ".env.local",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ]
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
+}
